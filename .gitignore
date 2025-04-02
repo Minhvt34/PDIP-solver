@@ -1,0 +1,23 @@
+# Julia specific
+*.jl.*.cov
+*.jl.cov
+*.jl.mem
+/deps/deps.jl
+Manifest.toml
+/docs/build/
+
+# System specific
+.DS_Store
+Thumbs.toml
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build output
+/build/
+*.so
+*.dylib
+*.dll 
