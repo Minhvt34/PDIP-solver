@@ -4,6 +4,7 @@ using Printf;
 using LinearAlgebra;
 
 include("starting_point.jl")
+include("presolve.jl")
 include("conversions.jl")
 
 function solve_processed(Problem, tol; maxit=100)
@@ -13,7 +14,7 @@ end
 # x + alpha * dx >= 0 -> solve for alpha:
 # alpha * dx >= -x -> alpha >= -x / dx (if positive)
 # alpha <= -x / dx (if negative)
-# Note that we don't care if dx is positive since alpha is [0.0, 1.0] 
+# Note that we don't care if dx is positive since alpha is [0.0, 1.0]
 function calcalpha(x, dx)
     n = length(x)
     alpha = Inf
@@ -28,7 +29,16 @@ end
 function iplp(Problem, tol; maxit=100)
     # Convert to standard form
     A, b, c, free, bounded_below, bounded_above, bounded = tostandard(Problem)
+
+    # Presolve step - modify A,b,c to be nicer
+    @show size(A)
+    orig_n = size(A, 2)
+    A, b, c, remaining_cols, removed_cols, xpre, feasible = presolve(A, b, c, Problem.hi, Problem.lo)
+    if !feasible
+        return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+    end
     m,n = size(A)
+    @show size(A)
 
     # Get initially feasible x, lambda, s
     # TODO
@@ -40,7 +50,7 @@ function iplp(Problem, tol; maxit=100)
     # 27x51, 27x27, 27x51
     # 51x51, 51x27, 51x51
 
-    # Implementing Mehotra's predictor-corrector algorithm (Ch. 10 of Wright)
+    # Implementing Mehrotra's predictor-corrector algorithm (Ch. 10 of Wright)
     for i = 1:maxit
         # Affine direction step (10.1 Wright)
         mat = lu([
@@ -73,6 +83,10 @@ function iplp(Problem, tol; maxit=100)
         alpha_pri = min(0.99 * calcalpha(x, dx), 1.0)
         alpha_dual = min(0.99 * calcalpha(s, ds), 1.0)
 
+        @show alpha_aff_pri, alpha_aff_dual
+        @show alpha_pri, alpha_dual
+        @show mu, dot(x, s)
+
         if (dot(x, s) > 1e308)
             # Very large (exploding) complementarity - problem is infeasible
             return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
@@ -89,7 +103,8 @@ function iplp(Problem, tol; maxit=100)
 
         # Check if tolerances are satisfied
         if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
-            orig_x = fromstandard(Problem, x, free, bounded_below, bounded_above, bounded)
+            x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
+            orig_x = fromstandard(Problem, x_unpresolved, free, bounded_below, bounded_above, bounded)
             @show i
             return IplpSolution(vec(orig_x),true,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
         end
