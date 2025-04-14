@@ -18,4 +18,8 @@ maxit = 100
 solution = @time iplp(problem, tol; maxit)
 
 @show solution.flag
-@printf "Objective value: %lf\n" dot(problem.c,solution.x)
+if solution.flag
+    @printf "Objective value: %lf\n" dot(problem.c,solution.x)
+else
+    @printf "Solver failed to converge. Check if problem is feasible. Try increasing # iterations in solve_frontend.jl or decreasing tolerance."
+end
