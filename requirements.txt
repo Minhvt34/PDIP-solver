@@ -1,5 +1,0 @@
-julia>=1.11.4
-MatrixDepot>=0.8.0
-SparseArrays
-LinearAlgebra
-Statistics 
