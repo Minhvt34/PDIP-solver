@@ -57,8 +57,8 @@ function presolve(A, b, c, hi, lo)
             continue
         end
 
-        # Rescale row and corresponding b to unit
-        scale = norm(A[i, :])
+        # Rescale row and corresponding b using infinity norm
+        scale = norm(A[i, :], Inf)
         A[i, :] = A[i, :] / scale
         b[i] = b[i] / scale
 
