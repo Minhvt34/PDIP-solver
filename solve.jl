@@ -6,6 +6,7 @@ using LinearAlgebra;
 include("starting_point.jl")
 include("presolve.jl")
 include("conversions.jl")
+include("problem_def.jl")
 
 function solve_processed(Problem, tol; maxit=100)
 end
@@ -33,10 +34,27 @@ function iplp(Problem, tol; maxit=100)
     # Presolve step - modify A,b,c to be nicer
     @show size(A)
     orig_n = size(A, 2)
-    A, b, c, remaining_cols, removed_cols, xpre, feasible = presolve(A, b, c, Problem.hi, Problem.lo)
-    if !feasible
-        return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
-    end
+
+
+
+    # A, b, c, remaining_cols, removed_cols, xpre, feasible = presolve(A, b, c, Problem.hi, Problem.lo)
+
+    m_std, n_std = size(A)
+    lo_std = zeros(n_std)
+    hi_std = fill(Inf, n_std)
+
+    std_problem = IplpProblem(c, A, b, lo_std, hi_std)
+
+    std_Ps, ind0c, dup_main_c, ind_dup_c = presolve(std_problem)
+
+    A = std_Ps.A
+    b = std_Ps.b
+    c = std_Ps.c
+
+    # if !feasible
+    #     return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+    # end
+
     m,n = size(A)
     @show size(A)
 
@@ -103,7 +121,8 @@ function iplp(Problem, tol; maxit=100)
 
         # Check if tolerances are satisfied
         if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
-            x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
+            #x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
+            x_unpresolved = revProb(std_problem, ind0c, dup_main_c, ind_dup_c, x)
             orig_x = fromstandard(Problem, x_unpresolved, free, bounded_below, bounded_above, bounded)
             @show i
             return IplpSolution(vec(orig_x),true,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))

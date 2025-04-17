@@ -1,85 +1,137 @@
-# Presolving and un-presolving functions for IPLP.
-# Solves problems with non-full-rank matrices,
-# decides variables ahead of time etc.
+using Test
 
-# Returns: (A, b, c, feasible)
-function presolve(A, b, c, hi, lo)
-    m,n = size(A)
+function presolve(P)
+    """
+    Presolve function
+    
+    """
+    m, n = size(P.A)
+    ind0r = zeros(Int64,0)
+    ind0c = zeros(Int64,0)
+    ind_dup_r = zeros(Int64,0)
+    ind_dup_c = zeros(Int64,0)
+    dup_main_c = Array[]
+    dup_del_c = Array[]
+    remove_ind_row = zeros(Int64,0)
+    remove_ind_col = zeros(Int64,0)
 
-    # Check for zero and duplicate columns
-    column_set = Dict()
-    to_remove = []
-    xpre = []
-    for j = 1:n
-        # Remove zero column
-        # Determine what the value of x should be
-        if @views all(A[:, j] .== 0)
-            if c[j] < 0
-                # Set this x to upper bound
-                if hi[j] > 1e308
-                    # Unbounded below
-                    @warn "Presolve step detected problem objective is unbounded."
-                    return A, b, c, [], [], [], false
-                end
-                push!(xpre, hi[j])
-            elseif c[j] > 0
-                # Set this x to lower bound
-                if lo[j] < -1e308
-                    # Unbounded below
-                    @warn "Presolve step detected problem objective is unbounded."
-                    return A, b, c, [], [], [], false
-                end
-                push!(xpre, lo[j])
-            else
-                # x value is completely irrelevant, so we'll set it to 0
-                push!(xpre, 0)
-            end
-            push!(to_remove, i)
-            continue
-        end
-
-        # TODO: Handle duplicate columns
-    end
-    cols_removed = to_remove
-    remaining_cols = setdiff(1:n, to_remove)
-    A = A[:, remaining_cols]
-    c = c[remaining_cols]
-    m,n = size(A)
-
-    # Check for zero and duplicate rows (constraints can be removed)
-    # Scale corresponding constraint to norm(A[i, :]) == 1
-    to_remove = []
-    row_set = Set()
+    # zero rows and columns in A
+    # zero rows
     for i = 1:m
-        # Remove zero row
-        if @views all(A[i, :] .== 0)
-            push!(to_remove, i)
+        j = 1
+        while (j <= n) && (P.A[i,j] == 0.0)
+            j += 1
+        end
+
+        if j == n+1
+            if P.b[i] == 0.0
+                ind0r = [ind0r; i]
+            else
+                warn("This problem is infeasible.")
+                return false
+            end
+        end
+    end
+    # zero columns
+    for j =1:n
+        i = 1
+        while (i <= m) && (P.A[i,j] == 0.0)
+            i += 1
+        end
+
+        if i == m+1
+            ind0c = [ind0c; j]
+        end
+    end
+
+    # duplicated rows
+    for i=1:(m-1)
+        if (i in ind_dup_r) || (i in ind0r)
             continue
         end
 
-        # Rescale row and corresponding b using infinity norm
-        scale = norm(A[i, :], Inf)
-        A[i, :] = A[i, :] / scale
-        b[i] = b[i] / scale
+        for j=(i+1):m
+            if (j in ind_dup_r) || (j in ind0r)
+                continue
+            end
 
-        # Check for duplicate row
-        if A[i, :] in row_set
-            push!(to_remove, i)
-        else
-            push!(row_set, A[i, :])
+            k = 1
+            while (k <= n) && (P.A[i,k] == P.A[j,k])
+                k += 1
+            end
+
+            if k == n+1
+                if P.b[i] == P.b[j]
+                    ind_dup_r = [ind_dup_r; j]
+                else
+                    warn("This problem is infeasible.")
+                    return false
+                end
+            end
+
         end
     end
-    remaining_rows = setdiff(1:m, to_remove)
-    A = A[remaining_rows, :]
-    b = b[remaining_rows]
-    m,n = size(A)
+    @show remove_ind_row = [ind0r; ind_dup_r]
 
-    return A, b, c, remaining_cols, cols_removed, xpre, true
+    # duplicate columns 
+    ### need modification
+    for i=1:(n-1)
+        dup_item = Array(i:i)
+        for j=(i+1):n
+            if !(j in ind_dup_c) && !(j in ind0c) && (P.A[:, i] == P.A[:, j])
+                dup_item = [dup_item; j]
+            end
+        end
+        if length(dup_item)>1
+            minv, mini = findmin(P.c[dup_item])
+            dup_flags = trues(length(dup_item))
+            dup_flags[mini] = false
+            dup_main_c = [dup_main_c; dup_item[mini]]
+            ind_dup_c = [ind_dup_c; dup_item[dup_flags]]
+        end
+    end
+    @show remove_ind_col = [ind0c; ind_dup_c]
+
+    indpre_row = Array(1:m)
+    indpre_col = Array(1:n)
+    flags_row = trues(m)
+    flags_col = trues(n)
+    flags_row[remove_ind_row] .= false
+    flags_col[remove_ind_col] .= false
+
+    return IplpProblem(P.c[flags_col], P.A[flags_row, flags_col],
+        P.b[flags_row], P.lo[flags_col], P.hi[flags_col]), ind0c, dup_main_c, ind_dup_c
 end
 
-function unpresolve(n, xs, remaining_cols, cols_removed, xpre)
-    x = zeros(n, 1)
-    x[remaining_cols] = xs
-    x[cols_removed] = xpre
+function revProb(P, ind0c, dup_main_c, ind_dup_c, x1)
+    m, n = size(P.A)
+    x = Array{Float64}(undef, n)
+    fill!(x, Inf)
+    j = 1
+    for i = 1:n
+        if x[i] == Inf
+            if i in ind0c
+                if P.c[i] > 0
+                    x[i] = P.lo[i]
+                elseif P.c[i] <0
+                    x[i] = P.hi[i]
+                else
+                    x[i] = 0.
+                end
+            elseif i in dup_main_c
+                x[i] = x1[j]
+                j += 1
+            elseif i in ind_dup_c
+                x[i] = 0.
+            else
+                x[i] = x1[j]
+                j += 1
+            end
+        end
+    end
+    
+    @test j == length(x1) + 1
+    
     return x
 end
+    
