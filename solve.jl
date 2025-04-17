@@ -4,7 +4,8 @@ using Printf;
 using LinearAlgebra;
 
 include("starting_point.jl")
-include("presolve.jl")
+#include("presolve.jl")
+include("presolve_extended.jl")
 include("conversions.jl")
 include("problem_def.jl")
 
@@ -43,13 +44,26 @@ function iplp(Problem, tol; maxit=100)
     lo_std = zeros(n_std)
     hi_std = fill(Inf, n_std)
 
-    std_problem = IplpProblem(c, A, b, lo_std, hi_std)
+    standard_problem = IplpProblem(c, A, b, lo_std, hi_std)
+    # std_Ps, ind0c, dup_main_c, ind_dup_c = presolve(std_problem)
 
-    std_Ps, ind0c, dup_main_c, ind_dup_c = presolve(std_problem)
+    # A = std_Ps.A
+    # b = std_Ps.b
+    # c = std_Ps.c
 
-    A = std_Ps.A
-    b = std_Ps.b
-    c = std_Ps.c
+    presolve_result = presolve(standard_problem)
+    status = presolve_result[1]
+
+    if status == :Success
+        std_presolved, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, dual_lb, dual_ub, obj_offset, free_singleton_subs = presolve_result[2:end]
+        @printf("Original standard form size: (%d, %d), After presolve: (%d, %d)\n", 
+                m_std, n_std, size(std_presolved.A)...)
+        
+        # --- Solve the presolved problem --- 
+        A = std_presolved.A
+        b = std_presolved.b
+        c = std_presolved.c
+    end
 
     # if !feasible
     #     return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
@@ -122,7 +136,8 @@ function iplp(Problem, tol; maxit=100)
         # Check if tolerances are satisfied
         if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
             #x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
-            x_unpresolved = revProb(std_problem, ind0c, dup_main_c, ind_dup_c, x)
+            #x_unpresolved = revProb(std_problem, ind0c, dup_main_c, ind_dup_c, x)
+            x_unpresolved = revProb(standard_problem, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, free_singleton_subs, x)
             orig_x = fromstandard(Problem, x_unpresolved, free, bounded_below, bounded_above, bounded)
             @show i
             return IplpSolution(vec(orig_x),true,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
