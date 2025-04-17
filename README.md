@@ -1,8 +1,8 @@
 # Develop a robust Primal-dual Interior-point Solver
 
-This is the final course project for course CS520: Computational Methods for Optimization collaborated with [Vincent Wang](github link). 
+This is the final course project for course CS520: Computational Methods for Optimization collaborated with [Vincent Wang](https://github.com/bbworld1). 
 
-Please check this report for more detail. We have to make our own weekly report.
+Please check this report for more detail.
 
 The complete algorithms and experimental result are in the [report](./report.pdf).
 
@@ -10,7 +10,7 @@ The complete algorithms and experimental result are in the [report](./report.pdf
 
 - Julia implementation
 
-- Presolve stage
+- Presolve stage (basic + extended procedures)
 
 - Mehrotra's predictor-corrector algorithm
 
@@ -23,24 +23,43 @@ You need to install Julia version > v1.1x to load test from MatrixDepot
 
 ## Usage
 
-The original project from here
-``` shell
-git clone https://github.com/dlguo/primal-dual-interior-point.git
-```
-
 To run the solver
 
 ``` shell
 git clone https://github.com/Minhvt34/PDIP-solver.git
 cd PDIP-solver
-julia solve.jl
+julia solve_frontend.jl
+```
+## References
+
+```bibtex
+@article{andersen1995presolving,
+  title={Presolving in linear programming},
+  author={Andersen, Erling D and Andersen, Knud D},
+  journal={Mathematical programming},
+  volume={71},
+  pages={221--245},
+  year={1995},
+  publisher={Springer}
+}
+@book{nocedal1999numerical,
+  title={Numerical optimization},
+  author={Nocedal, Jorge and Wright, Stephen J},
+  year={1999},
+  publisher={Springer}
+}
+
+@book{doi:10.1137/1.9781611971453,
+author = {Wright, Stephen J.},
+title = {Primal-Dual Interior-Point Methods},
+publisher = {Society for Industrial and Applied Mathematics},
+year = {1997},
+doi = {10.1137/1.9781611971453},
+address = {},
+edition   = {},
+URL = {https://epubs.siam.org/doi/abs/10.1137/1.9781611971453},
+eprint = {https://epubs.siam.org/doi/pdf/10.1137/1.9781611971453}
+}
+
 ```
 
-I have mordified the problem by adjusting the tolerance in phase_one to 1e-8.
-With the original tol = 1e-9, the solver is not that robust due to the tolerance is too tight. I also made other modification but still cannot improve the robustness of the solver.
-
-I add 11 problems to the interactive interface in which problem lp_etamacro, lp_fffff800 are not included in the posted project.
-We also can manually add project by name which should be published in LPnetlib.
-So far, I have not tested with other lib because the solver failed to solve problem lp_etamacro. Therefore I anticipate that we have to find ways to improve the current solver.
-
-In the interactive interface, choose 9 preset test problem in `LPnetlib` or use your own dataset.
