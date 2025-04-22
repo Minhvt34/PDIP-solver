@@ -12,8 +12,38 @@
 # x = A^T(AA^T)^-1b
 # lambda = (AA^T)-1Ac
 # s = c - A^Tlambda
+using SparseArrays, LinearAlgebra, SuiteSparse.CHOLMOD
+
 
 function get_starting_point(A, b, c)
+    m, n = size(A)
+    try
+        # Solve AA * y = b  with AA = A Aᵀ (SPD) ---------------------------
+        AA = Symmetric(A * A')
+        F  = cholesky(AA)        # CHOLMOD super‑nodal
+        y  = F \ b
+        x  = A' * y              # primal that satisfies Ax = b
+
+        λ  = F \ (A * c)        # dual y that makes rd small
+        s  = c - A' * λ
+
+        # Shift to interior -----------------------------------------------
+        dx = max(-1.5 * minimum(x), 0.0)
+        ds = max(-1.5 * minimum(s), 0.0)
+        x .+= dx
+        s .+= ds
+        τ   = 0.5 * dot(x, s)
+        x  .+= τ / sum(s)
+        s  .+= τ / sum(x)
+
+        return Vector{Float64}(x), Vector{Float64}(λ), Vector{Float64}(s)
+    catch err
+        @warn "get_starting_point fell back to trivial init" err
+        return ones(n), zeros(m), ones(n)
+    end
+end
+
+function get_starting_point_bk(A, b, c)
     A = A
     AA = A * A'
 
