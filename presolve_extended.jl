@@ -29,8 +29,16 @@ mutable struct PresolveReductionInfo
 end
 
 function presolve(P::IplpProblem)
-    @debug "Presolve start"
+    #@debug "Presolve start"
     P_work = deepcopy(P) # Work on a copy
+    
+    # --- Check initial b --- 
+    if any(!isfinite, P_work.b)
+        @error "Presolve: Initial b (after deepcopy, before any modification) contains non-finite values!" b=P_work.b
+        # Consider returning an error state immediately
+    end
+    # --- End Check ---
+    
     m_orig, n_orig = size(P_work.A)
 
     # Initialize reduction tracking
@@ -49,7 +57,7 @@ function presolve(P::IplpProblem)
     pass = 0
     while changed && pass < max_passes
         pass += 1
-        @debug "Presolve pass $pass"
+        #@debug "Presolve pass $pass"
         changed = false
 
         # Row-based reductions
@@ -76,7 +84,7 @@ function presolve(P::IplpProblem)
     # Remove rows/columns marked inactive during the loop
     remove_empty_rows_and_cols!(P_work, reductions, potential_rows, potential_cols)
 
-    @debug "Presolve end. Final problem size: $(size(P_work.A))"
+    #@debug "Presolve end. Final problem size: $(size(P_work.A))"
     
     # Return the presolved problem and all collected reduction info
     return :Success,
@@ -91,7 +99,7 @@ end
 # --- Subprocedure Definitions (Modified Signatures and Logic) ---
 
 function remove_fixed_variables!(P, reductions::PresolveReductionInfo)
-    @debug "Removing fixed variables"
+    #@debug "Removing fixed variables"
     changed = false
     _, n = size(P.A)
     # Identify columns where lower == upper (using original indices)
@@ -107,12 +115,31 @@ function remove_fixed_variables!(P, reductions::PresolveReductionInfo)
     append!(reductions.ind_fix_c, fixed_orig_indices)
     append!(reductions.fix_vals, fixed_vals)
     reductions.obj_offset += dot(P.c[fixed_orig_indices], fixed_vals)
-    @debug "Recording fixed variables: $(fixed_orig_indices) with values $(fixed_vals). Obj offset change: $(dot(P.c[fixed_orig_indices], fixed_vals))"
+    #@debug "Recording fixed variables: $(fixed_orig_indices) with values $(fixed_vals). Obj offset change: $(dot(P.c[fixed_orig_indices], fixed_vals))"
     # --- End Record ---
 
     # Substitute fixed variable contributions into RHS (b)
     if !isempty(fixed_orig_indices)
+        # Check b before modification
+        if any(!isfinite, P.b)
+            @warn "Presolve: b contains non-finite values BEFORE fixed var substitution!" b=P.b
+        end
+        # Check fixed_vals
+        if any(!isfinite, fixed_vals)
+            @warn "Presolve: fixed_vals contains non-finite values!" fixed_vals=fixed_vals
+        end
+        # Check A subset (optional, might be slow)
+        # if any(!isfinite, P.A[:, fixed_orig_indices].nzval)
+        #     @warn "Presolve: A subset for fixed vars contains non-finite values!"
+        # end
+        
         P.b .-= P.A[:, fixed_orig_indices] * fixed_vals
+        
+        # Check b after modification
+        if any(!isfinite, P.b)
+            @warn "Presolve: b contains non-finite values AFTER fixed var substitution!" b=P.b fixed_indices=fixed_orig_indices fixed_values=fixed_vals
+            # Potentially throw error or return early if critical
+        end
         changed = true
     end
     
@@ -125,18 +152,18 @@ end
 
 # Initialize flags based on current problem state AND already fixed variables
 function initialize_flags(P, reductions::PresolveReductionInfo)
-    @debug "Initializing potential rows and columns"
+    #@debug "Initializing potential rows and columns"
     m, n = size(P.A)
     rows = trues(m)
     cols = trues(n)
     # Exclude already fixed variables from potential columns
     cols[reductions.ind_fix_c] .= false
-    @debug "Initial potential cols (after fixed vars): $(sum(cols)) / $n"
+    #@debug "Initial potential cols (after fixed vars): $(sum(cols)) / $n"
     return rows, cols
 end
 
 function remove_row_singletons!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Removing row singletons"
+    #@debug "Removing row singletons"
     changed = false
     m, n = size(P.A)
     tol = 1e-8
@@ -177,7 +204,7 @@ function remove_row_singletons!(P, reductions::PresolveReductionInfo, potential_
                 elseif !(original_j in reductions.ind_fix_c) # Only fix if not already fixed globally
                      vars_to_fix[original_j] = fixed_val
                      push!(rows_to_remove, i) # Mark row for removal
-                     @debug "Row singleton at row $i (orig $(reductions.original_row_indices[i])) proposes fixing var $j (orig $original_j) = $fixed_val"
+                     #@debug "Row singleton at row $i (orig $(reductions.original_row_indices[i])) proposes fixing var $j (orig $original_j) = $fixed_val"
                      changed = true
                 end
             end
@@ -202,11 +229,26 @@ function remove_row_singletons!(P, reductions::PresolveReductionInfo, potential_
             # Assume P_work.c still holds costs for currently active vars
             obj_change = dot(P.c[current_fixed_indices], fixed_vals) 
             reductions.obj_offset += obj_change
-            @debug "Applying row singleton fixes. Vars: $(fixed_orig_indices), Vals: $(fixed_vals). Obj change: $obj_change"
+            #@debug "Applying row singleton fixes. Vars: $(fixed_orig_indices), Vals: $(fixed_vals). Obj change: $obj_change"
              # --- End Record ---
 
             # Substitute fixed variable contributions into RHS (b)
+            # --- Add Checks ---
+            if any(!isfinite, P.b)
+                @warn "Presolve/RowSingleton: b contains non-finite values BEFORE substitution!" b=P.b
+            end
+            if any(!isfinite, fixed_vals)
+                @warn "Presolve/RowSingleton: fixed_vals contains non-finite values!" fixed_vals=fixed_vals
+            end
+            # --- End Checks ---
+            
             P.b .-= P.A[:, current_fixed_indices] * fixed_vals
+            
+            # --- Add Checks ---
+            if any(!isfinite, P.b)
+                @warn "Presolve/RowSingleton: b contains non-finite values AFTER substitution!" b=P.b fixed_indices=current_fixed_indices fixed_values=fixed_vals
+            end
+            # --- End Checks ---
         
              # Mark columns as inactive (will be removed by remove_empty_...)
             potential_cols[current_fixed_indices] .= false
@@ -221,7 +263,7 @@ end
 
 
 function remove_forcing_constraints!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Removing forcing constraints"
+    #@debug "Removing forcing constraints"
     changed = false
     m, n = size(P.A) # Current dimensions
     tol = 1e-8
@@ -284,7 +326,7 @@ function remove_forcing_constraints!(P, reductions::PresolveReductionInfo, poten
         end
 
         if is_forcing
-            @debug "Forcing row $i (orig $(reductions.original_row_indices[i])), type: $forcing_type"
+            #@debug "Forcing row $i (orig $(reductions.original_row_indices[i])), type: $forcing_type"
             push!(rows_to_remove, i) # Mark row for removal regardless of type
             changed = true
 
@@ -312,7 +354,7 @@ function remove_forcing_constraints!(P, reductions::PresolveReductionInfo, poten
                      error("Presolve: Forcing row $i conflicts with previous fix for var $orig_j. Current val: $fixed_val, previous: $(vars_to_fix[orig_j]).")
                 elseif !(orig_j in reductions.ind_fix_c) # Only fix if not globally fixed yet
                      vars_to_fix[orig_j] = fixed_val
-                     @debug "  -> Proposes fixing var $j (orig $orig_j) = $fixed_val"
+                     ##@debug "  -> Proposes fixing var $j (orig $orig_j) = $fixed_val"
                 end
             end
         end
@@ -334,11 +376,26 @@ function remove_forcing_constraints!(P, reductions::PresolveReductionInfo, poten
             # obj_change = dot(P.c[fixed_orig_indices], fixed_vals) # Need original P.c
             obj_change = dot(P.c[current_fixed_indices], fixed_vals) # Use current c for active vars
             reductions.obj_offset += obj_change
-            @debug "Applying forcing constraint fixes. Vars: $(fixed_orig_indices), Vals: $(fixed_vals). Obj change: $obj_change"
+            ##@debug "Applying forcing constraint fixes. Vars: $(fixed_orig_indices), Vals: $(fixed_vals). Obj change: $obj_change"
              # --- End Record ---
 
             # Substitute fixed variable contributions into RHS (b)
+            # --- Add Checks ---
+            if any(!isfinite, P.b)
+                @warn "Presolve/Forcing: b contains non-finite values BEFORE substitution!" b=P.b
+            end
+            if any(!isfinite, fixed_vals)
+                @warn "Presolve/Forcing: fixed_vals contains non-finite values!" fixed_vals=fixed_vals
+            end
+            # --- End Checks ---
+            
             P.b .-= P.A[:, current_fixed_indices] * fixed_vals
+            
+            # --- Add Checks ---
+            if any(!isfinite, P.b)
+                @warn "Presolve/Forcing: b contains non-finite values AFTER substitution!" b=P.b fixed_indices=current_fixed_indices fixed_values=fixed_vals
+            end
+            # --- End Checks ---
         
              # Mark columns as inactive
             potential_cols[current_fixed_indices] .= false
@@ -353,7 +410,7 @@ end
 
 
 function remove_dominated_constraints!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Removing dominated constraints (zero rows)"
+    #@debug "Removing dominated constraints (zero rows)"
     changed = false
     m, n = size(P.A) # Current dimensions
     tol = 1e-8
@@ -372,7 +429,7 @@ function remove_dominated_constraints!(P, reductions::PresolveReductionInfo, pot
                 # Redundant row
                 push!(rows_to_remove, i)
                 orig_i = reductions.original_row_indices[i]
-                @debug "Removed zero row $i (orig $orig_i) - redundant"
+                ##@debug "Removed zero row $i (orig $orig_i) - redundant"
                 # TODO: Potentially update dual bounds if needed, depends on equality/inequality type
                 changed = true
             else
@@ -391,7 +448,7 @@ end
 
 
 function remove_free_implied_column_singletons!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Removing free/implied column singletons"
+    #@debug "Removing free/implied column singletons"
     changed = false
     m, n = size(P.A) # Current dimensions
     tol = 1e-8
@@ -431,7 +488,7 @@ function remove_free_implied_column_singletons!(P, reductions::PresolveReduction
 
                 # --- Record Reduction Info ---
                 substitutions[orig_j] = (orig_k, akj, subs_dict_orig_indices)
-                 @debug "Free column singleton: var $j (orig $orig_j) in row $k (orig $orig_k). Substitution rule prepared."
+                 ##@debug "Free column singleton: var $j (orig $orig_j) in row $k (orig $orig_k). Substitution rule prepared."
                 # --- End Record ---
 
                 # Mark column j and row k for removal
@@ -475,7 +532,7 @@ function remove_free_implied_column_singletons!(P, reductions::PresolveReduction
         
         reductions.obj_offset += current_obj_offset
         merge!(reductions.free_singleton_subs, substitutions) # Add new substitutions
-         @debug "Applied free singleton substitutions. Obj offset change: $current_obj_offset. Total subs: $(length(reductions.free_singleton_subs))"
+         ##@debug "Applied free singleton substitutions. Obj offset change: $current_obj_offset. Total subs: $(length(reductions.free_singleton_subs))"
 
         # Mark columns and rows as inactive
         unique!(cols_to_remove)
@@ -490,17 +547,17 @@ end
 # --- Placeholder/Stub Functions ---
 
 function remove_doubleton_column_singletons!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    # @debug "Removing doubleton column singletons (TODO)"
+    # #@debug "Removing doubleton column singletons (TODO)"
     return false # No changes made
 end
 
 function remove_dominated_columns!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    # @debug "Removing dominated columns (TODO)"
+    # #@debug "Removing dominated columns (TODO)"
     return false # No changes made
 end
 
 function remove_duplicate_rows!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-     @debug "Removing duplicate rows via hashing"
+     #@debug "Removing duplicate rows via hashing"
     # This implementation is complex due to needing original indices and handling RHS/dual bounds.
     # Keeping it simple for now: just marks potential duplicates.
     changed = false
@@ -543,7 +600,7 @@ function remove_duplicate_rows!(P, reductions::PresolveReductionInfo, potential_
                     # Check if vectors truly match (hash collision check)
                     if P.A[main_orig_idx, active_col_indices] == P.A[dup_orig_idx, active_col_indices]
                         push!(rows_to_remove, dup_orig_idx) # Mark the original duplicate row index for removal
-                        @debug "Removed duplicate row $dup_orig_idx matching row $main_orig_idx"
+                        ##@debug "Removed duplicate row $dup_orig_idx matching row $main_orig_idx"
                         changed = true
                         # TODO: Need to handle dual variable bounds adjustment here.
                         # dual_lb/ub for main_orig_idx might need update.
@@ -568,7 +625,7 @@ end
 
 
 function remove_duplicate_columns!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Removing duplicate columns via hashing (identical only)"
+    #@debug "Removing duplicate columns via hashing (identical only)"
     changed = false
     m, n = size(P.A) # Current dimensions
     tol = 1e-8
@@ -613,7 +670,7 @@ function remove_duplicate_columns!(P, reductions::PresolveReductionInfo, potenti
                 # Use current A matrix indices
                 if P.A[active_row_indices, main_active_idx] == P.A[active_row_indices, dup_active_idx]
                     # --- Identical Column Found --- 
-                    @debug "Duplicate column found: $dup_orig_idx (active $dup_active_idx) matches $main_orig_idx (active $main_active_idx)"
+                    ##@debug "Duplicate column found: $dup_orig_idx (active $dup_active_idx) matches $main_orig_idx (active $main_active_idx)"
                     
                     # Combine bounds: [lo_m, hi_m] = [lo_m+lo_d, hi_m+hi_d]
                     # Combine cost: c_m = c_m + c_d
@@ -622,7 +679,7 @@ function remove_duplicate_columns!(P, reductions::PresolveReductionInfo, potenti
                     P.lo[main_active_idx] += P.lo[dup_active_idx]
                     P.hi[main_active_idx] += P.hi[dup_active_idx]
                     P.c[main_active_idx]  += P.c[dup_active_idx]
-                    @debug "  Combined bounds/cost: Main $main_orig_idx now has lo=$(P.lo[main_active_idx]), hi=$(P.hi[main_active_idx]), c=$(P.c[main_active_idx])"
+                    ##@debug "  Combined bounds/cost: Main $main_orig_idx now has lo=$(P.lo[main_active_idx]), hi=$(P.hi[main_active_idx]), c=$(P.c[main_active_idx])"
 
                     # Mark duplicate for removal
                     push!(cols_to_remove, dup_active_idx) # Mark current index
@@ -645,7 +702,7 @@ function remove_duplicate_columns!(P, reductions::PresolveReductionInfo, potenti
     if !isempty(cols_to_remove)
          unique!(cols_to_remove)
          potential_cols[cols_to_remove] .= false # Mark current indices as inactive
-         @debug "Marked $(length(cols_to_remove)) duplicate columns for removal."
+         ##@debug "Marked $(length(cols_to_remove)) duplicate columns for removal."
     end
 
     return changed
@@ -654,17 +711,17 @@ end
 # --- Final Cleanup Function ---
 
 function remove_empty_rows_and_cols!(P, reductions::PresolveReductionInfo, potential_rows, potential_cols)
-    @debug "Applying removals of inactive rows and columns"
+    #@debug "Applying removals of inactive rows and columns"
     
     active_rows = findall(potential_rows)
     active_cols = findall(potential_cols)
 
     if length(active_rows) == length(potential_rows) && length(active_cols) == length(potential_cols)
-        @debug "No rows or columns to remove."
+        #@debug "No rows or columns to remove."
         return # Nothing to do
     end
     
-    @debug "Removing $(length(potential_rows) - length(active_rows)) rows and $(length(potential_cols) - length(active_cols)) columns."
+    ##@debug "Removing $(length(potential_rows) - length(active_rows)) rows and $(length(potential_cols) - length(active_cols)) columns."
 
     # Update the reduction info to reflect final active indices
     final_original_row_indices = reductions.original_row_indices[active_rows]
@@ -686,7 +743,7 @@ function remove_empty_rows_and_cols!(P, reductions::PresolveReductionInfo, poten
     reductions.dual_lb = reductions.dual_lb[active_rows]
     reductions.dual_ub = reductions.dual_ub[active_rows]
     
-    @debug "Final problem dimensions: $(size(P.A)). Active rows: $(length(active_rows)), Active cols: $(length(active_cols))"
+    #@debug "Final problem dimensions: $(size(P.A)). Active rows: $(length(active_rows)), Active cols: $(length(active_cols))"
 end
 
 
@@ -705,8 +762,8 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
     x = Vector{Float64}(undef, n_orig)
     fill!(x, NaN) # Initialize with NaN
 
-    @debug "revProb started. Original n=$n_orig. Presolved solution length=$(length(x1))."
-    @debug "Fixed vars: $(length(ind_fix_c)), Zero cost vars: $(length(ind0c)), Dup vars: $(length(ind_dup_c)), Free singletons: $(length(free_singleton_subs))"
+    #@debug "revProb started. Original n=$n_orig. Presolved solution length=$(length(x1))."
+    #@debug "Fixed vars: $(length(ind_fix_c)), Zero cost vars: $(length(ind0c)), Dup vars: $(length(ind_dup_c)), Free singletons: $(length(free_singleton_subs))"
 
     # --- Step 1: Map solved variables (x1) back to their original indices ---
     
@@ -733,7 +790,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
         end
         x[orig_idx] = x1[idx]
     end
-    @debug "Mapped solver solution x1 to $(length(active_indices_presolved)) active original indices."
+    #@debug "Mapped solver solution x1 to $(length(active_indices_presolved)) active original indices."
 
     # --- Step 2: Assign values for fixed variables ---
     fix_val_map = Dict(zip(ind_fix_c, fix_vals))
@@ -746,7 +803,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
          x[i] = fix_val_map[i]
          fixed_assigned_count += 1
     end
-     @debug "Assigned values to $fixed_assigned_count fixed variables."
+     #@debug "Assigned values to $fixed_assigned_count fixed variables."
 
     # --- Step 3: Assign values for zero-cost variables (removed via ind0c) ---
     # The logic here depends on how ind0c was populated. Assuming it's for vars fixed
@@ -770,7 +827,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
             zero_cost_assigned_count += 1
         end
     end
-     @debug "Assigned values to $zero_cost_assigned_count zero-cost variables (ind0c)."
+     #@debug "Assigned values to $zero_cost_assigned_count zero-cost variables (ind0c)."
 
 
     # --- Step 4: Assign values for duplicate columns (removed via ind_dup_c) ---
@@ -803,15 +860,15 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
                 duplicate_assigned_count += 1
             end
         end
-        @debug "Assigned values to $duplicate_assigned_count duplicate variables (ind_dup_c) based on main columns."
+        #@debug "Assigned values to $duplicate_assigned_count duplicate variables (ind_dup_c) based on main columns."
     else
-        @debug "No duplicate columns (ind_dup_c) to process."
+        #@debug "No duplicate columns (ind_dup_c) to process."
     end
 
 
     # --- Step 5: Calculate values for substituted free column singletons ---
     if !isempty(free_singleton_subs)
-         @debug "Calculating values for $(length(free_singleton_subs)) substituted free singletons..."
+         #@debug "Calculating values for $(length(free_singleton_subs)) substituted free singletons..."
          max_passes = n_orig # Safety break for dependency loops
          current_pass = 0
          made_progress = true
@@ -832,7 +889,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
                      if i_sub > n_orig || i_sub < 1; error("revProb Error: Invalid dependency index $i_sub for free singleton $j."); end
                      if isnan(x[i_sub]) 
                          dependencies_met = false
-                         # @debug "Dependency $i_sub for free singleton $j not met yet."
+                         # #@debug "Dependency $i_sub for free singleton $j not met yet."
                          break # Cannot calculate x[j] yet
                      end
                      sum_term += aki * x[i_sub]
@@ -845,7 +902,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
                          x[j] = (bk - sum_term) / akj
                          push!(resolved_this_pass, j)
                          made_progress = true
-                          @debug " Resolved free singleton $j = $(x[j])"
+                          #@debug " Resolved free singleton $j = $(x[j])"
                      else
                           @warn("revProb Warning: Cannot resolve free singleton var $j: stored coefficient akj ($akj) is near zero.")
                           x[j] = 0.0 # Assign 0 as fallback? Or leave NaN? Leaving NaN for now.
@@ -870,7 +927,7 @@ function revProb(P_orig::IplpProblem, # The original problem before any presolve
         # x[unassigned_indices] .= 0.0
     end
 
-    @debug "revProb finished."
+    #@debug "revProb finished."
     return x
 end
 
