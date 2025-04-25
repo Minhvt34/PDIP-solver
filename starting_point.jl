@@ -21,14 +21,21 @@ function get_starting_point(A, b, c)
     try
         # Solve AA * y = b  with AA = A Aᵀ (SPD) ---------------------------
         # Regularization parameter
-        delta = eps(Float64)
+        # Increased regularization
+        delta = sqrt(eps(Float64)) * 100 # Start with a larger value than eps()
         # Add regularization: AA = A*A' + delta*I
         AA = A * A'
         
         # Factorize the regularized matrix
-        F  = cholesky(AA)        # CHOLMOD super‑nodal
-        if !issuccess(F)
-            @warn "Cholesky factorization failed even with regularization. Matrix A*A' might be severely ill-conditioned."
+        local F # Ensure F is scoped for potential errors
+        try
+            F = cholesky(AA + delta * I) # Add regularization here
+            if !issuccess(F)
+                @warn "Cholesky factorization failed even with regularization (delta=$delta). Matrix A*A' might be severely ill-conditioned."
+                throw(ErrorException("Cholesky factorization failed")) # Force fallback
+            end
+        catch e
+            @warn "Cholesky factorization failed with delta=$delta." exception=e
             throw(ErrorException("Cholesky factorization failed")) # Force fallback
         end
 
