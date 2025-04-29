@@ -4,11 +4,6 @@ using Printf;
 using LinearAlgebra;
 using MatrixDepot, SparseArrays
 
-include("starting_point.jl")
-#include("presolve.jl")
-include("presolve_extended.jl")
-include("conversions.jl")
-
 mutable struct IplpSolution
   x::Vector{Float64} # the solution vector
   flag::Bool         # a true/false flag indicating convergence or not
@@ -27,6 +22,11 @@ mutable struct IplpProblem
   lo::Vector{Float64}
   hi::Vector{Float64}
 end
+
+include("starting_point.jl")
+#include("presolve.jl")
+include("presolve_extended.jl")
+include("conversions.jl")
 
 function convert_matrixdepot(P::MatrixDepot.MatrixDescriptor)
   # key_base = sort(collect(keys(mmmeta)))[1]
@@ -137,9 +137,9 @@ function iplp(Problem, tol; maxit=100)
         alpha_pri = min(0.99 * calcalpha(x, dx), 1.0)
         alpha_dual = min(0.99 * calcalpha(s, ds), 1.0)
 
-        @show alpha_aff_pri, alpha_aff_dual
-        @show alpha_pri, alpha_dual
-        @show mu, dot(x, s)
+        # @show alpha_aff_pri, alpha_aff_dual
+        # @show alpha_pri, alpha_dual
+        # @show mu, dot(x, s)
 
         if (dot(x, s) > 1e308)
             # Very large (exploding) complementarity - problem is infeasible
