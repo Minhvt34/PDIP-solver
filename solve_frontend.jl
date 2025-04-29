@@ -1,7 +1,6 @@
 using Printf
 
-include("problem_def.jl")
-include("solve.jl")
+include("project2.jl")
 
 # Get problem to be solved
 @printf("Type the name of the LPnetlib problem to be solved (e.g. lp_afiro): ")
