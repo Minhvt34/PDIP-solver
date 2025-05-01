@@ -41,7 +41,7 @@ for name in problems
     problem = convert_matrixdepot(mdopen(problem_path))
 
     # Set params and solve problem
-    tol = 1e-5
+    tol = 1e-7
     maxit = 100
     solution = @time iplp(problem, tol; maxit)
 
