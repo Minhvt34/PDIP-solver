@@ -22,7 +22,8 @@ function get_starting_point(A, b, c)
         # Solve AA * y = b  with AA = A Aᵀ (SPD) ---------------------------
         # Regularization parameter
         # Increased regularization
-        delta = sqrt(eps(Float64)) * 100 # Start with a larger value than eps()
+        # delta = sqrt(eps(Float64)) * 100 # Start with a larger value than eps()
+        delta = 1e-6 # Use a larger fixed regularization
         # Add regularization: AA = A*A' + delta*I
         AA = A * A'
         

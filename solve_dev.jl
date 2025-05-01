@@ -124,8 +124,10 @@ function iplp(Problem, tol; maxit=100)
     for i = 1:maxit
         @show i
         # Regularization parameters (can be tuned)
-        delta_p = 1e-8 # Primal regularization
-        delta_d = 1e-8 # Dual regularization
+        # delta_p = 1e-8 # Revert back
+        # delta_d = 1e-8 # Revert back
+        delta_p = 1e-9 # Try slightly smaller regularization
+        delta_d = 1e-9 # Try slightly smaller regularization
 
         # Affine direction step (10.1 Wright)
         M = [
@@ -162,6 +164,7 @@ function iplp(Problem, tol; maxit=100)
         mu = dot(x, s) / n # 1.11
         muaff = (x + alpha_aff_pri * dxaff)' * (s + alpha_aff_dual * dsaff) / n
         sigma = (muaff / mu)^3 # 10.3
+        # sigma = min((muaff / mu)^3, 0.4) # Cap sigma to prioritize mu reduction
 
         # Centering-Corrector step from Wright 10.7
         rhs_cc = [
@@ -172,8 +175,13 @@ function iplp(Problem, tol; maxit=100)
         dcc = mat \ rhs_cc
         dxcc, dlambdacc, dscc = dcc[1:n], dcc[n+1:n+m], dcc[n+m+1:n+m+n]
         dx, dlambda, ds = dxaff + dxcc, dlambdaff + dlambdacc, dsaff + dscc
-        alpha_pri = min(0.99 * calcalpha(x, dx), 1.0)
-        alpha_dual = min(0.99 * calcalpha(s, ds), 1.0)
+        
+        # Use a slightly more conservative step length factor (e.g., 0.95)
+        # eta = 0.95 
+        # eta = 0.98 # Nudge back up slightly for potentially faster final steps
+        eta = 0.95 # Revert back to 0.95 which worked better
+        alpha_pri = min(eta * calcalpha(x, dx), 1.0)
+        alpha_dual = min(eta * calcalpha(s, ds), 1.0)
 
         @show alpha_aff_pri, alpha_aff_dual
         @show alpha_pri, alpha_dual
@@ -194,7 +202,16 @@ function iplp(Problem, tol; maxit=100)
         s = s + alpha_dual * ds
 
         # Check if tolerances are satisfied
-        if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
+        current_mu = dot(x, s) / n
+        kkt_res = [A'* lambda + s - c; A * x - b; x.*s] # Recompute for accuracy
+        norm_kkt_res = norm(kkt_res)
+        norm_rhs = norm([b;c])
+        rel_norm_kkt = norm_rhs > 1e-12 ? norm_kkt_res / norm_rhs : norm_kkt_res # Avoid division by zero
+        
+        @show current_mu
+        @show rel_norm_kkt
+        
+        if current_mu <= tol && rel_norm_kkt <= tol
             #x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
             #x_unpresolved = revProb(std_problem, ind0c, dup_main_c, ind_dup_c, x)
             x_unpresolved = revProb(standard_problem, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, free_singleton_subs, x)

@@ -175,7 +175,7 @@ function fromstandard(P, xs, free, bounded_below, bounded_above, bounded)
     # Reconstruct dim of original var
     n = n1 + n2 + n3 + n4
     x = zeros(n)
-    
+
     # --- Check input xs magnitude ---
     if length(xs) > 0
         max_abs_xs = maximum(abs.(xs))
@@ -237,6 +237,6 @@ function fromstandard(P, xs, free, bounded_below, bounded_above, bounded)
     max_abs_x = maximum(abs.(x))
     @info "fromstandard: Output x max abs = $(max_abs_x)"
     # --- End Check ---
-    
+
     return x
 end

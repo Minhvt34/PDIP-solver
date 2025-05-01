@@ -85,6 +85,69 @@ function presolve(P::IplpProblem)
     remove_empty_rows_and_cols!(P_work, reductions, potential_rows, potential_cols)
 
     #@debug "Presolve end. Final problem size: $(size(P_work.A))"
+
+    # --- Post-Presolve Row Dependency Removal ---
+    A_final = P_work.A
+    b_final = P_work.b
+    m_final, n_final = size(A_final)
+    if m_final > 0 && n_final > 0 # Only proceed if the matrix is non-empty
+        rank_tol = 1e-8 # Tolerance for rank determination
+        try
+            # Use sparse QR on the transpose A'
+            # Val(true) enables column pivoting needed for rank-revealing QR
+            # Convert to dense for QR with pivoting, as sparse QR doesn't support it.
+            # This might be memory-intensive for very large presolved matrices.
+            if m_final * n_final > 100_000_000 # Add a size check as a safeguard
+                @warn "Presolve: Matrix size ($(m_final)x$(n_final)) is large for dense QR rank check. Consider alternative methods if memory becomes an issue."
+            end
+            F = qr(Matrix(A_final'), Val(true)) # Convert A_final' to dense Matrix
+            
+            # Numerical rank is the number of diagonal elements in R > tolerance
+            diag_R = abs.(diag(F.R))
+            rank_A = sum(diag_R .> rank_tol * maximum(diag_R)) # Relative tolerance
+            
+            if rank_A < m_final
+                @warn "Presolve: Detected $(m_final - rank_A) linearly dependent rows after main presolve steps (Rank $rank_A < $m_final). Removing dependent rows."
+
+                # The permutation vector F.p gives the column order of A' (row order of A).
+                # The first `rank_A` columns of A'P (rows of P'A) are linearly independent.
+                independent_rows = sort(F.p[1:rank_A])
+                
+                # Select the independent rows
+                P_work.A = A_final[independent_rows, :]
+                P_work.b = b_final[independent_rows]
+                
+                # Update tracking information
+                original_rows_kept = reductions.original_row_indices[independent_rows]
+                reductions.original_row_indices = original_rows_kept
+                
+                # Also update dual bounds if they are used later (optional based on solver)
+                reductions.dual_lb = reductions.dual_lb[independent_rows]
+                reductions.dual_ub = reductions.dual_ub[independent_rows]
+                
+                # Filter free_singleton_subs: remove rules involving removed rows
+                rows_removed_by_qr = setdiff(Set(1:m_final), Set(independent_rows))
+                if !isempty(rows_removed_by_qr)
+                    # Convert the Set to a Vector before indexing
+                    rows_removed_by_qr_vector = collect(rows_removed_by_qr)
+                    original_indices_of_rows_removed_by_qr = Set(reductions.original_row_indices[rows_removed_by_qr_vector])
+                    filter!(kv -> 
+                        let (k, _, _) = kv.second; !(k in original_indices_of_rows_removed_by_qr) end,
+                        reductions.free_singleton_subs
+                    )
+                    @info "Presolve: Removed $(length(rows_removed_by_qr)) singleton substitution rules due to dependent row removal."
+                end
+
+                @info "Presolve: Removed dependent rows. New size: $(size(P_work.A))"
+            end
+        catch e
+            @error "Error during QR decomposition for rank check in presolve." exception=e
+            # Decide how to proceed: return error? continue with potentially rank-deficient matrix?
+            # Returning :PresolveQRError status might be appropriate
+            # return :PresolveQRError, ... (adapt return structure)
+        end
+    end
+    # --- End Row Dependency Removal ---
     
     # Return the presolved problem and all collected reduction info
     return :Success,
