@@ -34,7 +34,7 @@ function simple_presolve(A, b, c, hi, lo)
                 # x value is completely irrelevant, so we'll set it to 0
                 push!(xpre, 0)
             end
-            push!(to_remove, i)
+            push!(to_remove, j)
             continue
         end
 
