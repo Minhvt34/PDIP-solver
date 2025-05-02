@@ -35,7 +35,7 @@ function simple_iplp(Problem, tol; maxit=100)
 
     if !feasible
         @warn "Problem determined infeasible during simple presolve."
-        return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec([]), vec([]), vec([]), :PresolveInfeasible)
+        return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec([]), vec([]), vec([]))
     end
     m_ps, n_ps = size(A_ps)
     @printf("Original standard form size: (%d, %d), After simple presolve: (%d, %d)\\n",
@@ -213,7 +213,7 @@ function simple_iplp(Problem, tol; maxit=100)
 
             if !factorization_success && retry_attempt == max_factorization_retries
                  @warn "LU factorization failed permanently (Simple Path) at iteration $i after $max_factorization_retries retries."
-                 return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s), :KKTLUFactorizationFailed)
+                 return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
             end
         end
         # -- End Adaptive Factorization Attempt --

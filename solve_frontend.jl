@@ -6,7 +6,50 @@ include("project2.jl")
 @printf("Type the name of the LPnetlib problem to be solved (e.g. lp_afiro) or 'ALL_LARGE': ")
 name = readline(stdin)
 
-if name == "ALL_LARGE"
+if name == "ALL_SMALL"
+    global_logger(ConsoleLogger(stderr, Logging.Warn)) # Set minimum level to Warn
+
+    problems = [
+        "lp_25fv47",
+        "lp_80bau3b",
+        "lp_adlittle",
+        "lp_afiro",
+        "lp_agg",
+        "lp_agg2",
+        "lp_agg3",
+        "lp_bandm",
+        "lp_beaconfd",
+        "lp_blend",
+        "lp_bnl1",
+        "lp_bnl2",
+        "lp_bore3d",
+        "lp_brandy",
+        "lp_capri",
+        "lp_cycle",
+        "lp_czprob",
+        "lp_d2q06c",
+        "lp_degen2",
+        "lp_degen3",
+        "lp_e226",
+        "lp_etamacro",
+        "lp_fffff800",
+        "lp_finnis",
+        "lp_fit1d",
+        "lp_fit2d",
+        "lp_ganges",
+        "lp_gfrd_pnc",
+        "lp_greenbea",
+        "lp_greenbeb",
+        "lp_grow15",
+        "lp_grow22",
+        "lp_grow7",
+        "lp_israel",
+        "lp_kb2",
+        "lp_lotfi",
+        "lp_maros",
+    ]
+
+elseif name == "ALL_LARGE"
     global_logger(ConsoleLogger(stderr, Logging.Warn)) # Set minimum level to Warn
 
     problems = [
