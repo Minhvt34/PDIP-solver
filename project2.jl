@@ -26,6 +26,7 @@ end
 include("starting_point.jl")
 #include("presolve.jl")
 include("presolve_extended.jl")
+include("presolve_simple.jl")
 include("conversions.jl")
 
 function convert_matrixdepot(P::MatrixDepot.MatrixDescriptor)
@@ -56,67 +57,118 @@ function iplp(Problem, tol; maxit=100)
 
     # Presolve step - modify A,b,c to be nicer
     @show size(A)
-    orig_n = size(A, 2)
-
-
-
-    # A, b, c, remaining_cols, removed_cols, xpre, feasible = presolve(A, b, c, Problem.hi, Problem.lo)
+    orig_n_std = size(A, 2) # Original standard form n
 
     m_std, n_std = size(A)
     lo_std = zeros(n_std)
     hi_std = fill(Inf, n_std)
 
     standard_problem = IplpProblem(c, A, b, lo_std, hi_std)
-    # std_Ps, ind0c, dup_main_c, ind_dup_c = presolve(std_problem)
 
-    # A = std_Ps.A
-    # b = std_Ps.b
-    # c = std_Ps.c
+    # --- Try Simple Presolve First ---
+    A_simple, b_simple, c_simple, remaining_cols_simple, cols_removed_simple, xpre_simple, feasible_simple = simple_presolve(
+        copy(standard_problem.A), copy(standard_problem.b), copy(standard_problem.c), standard_problem.hi, standard_problem.lo
+    )
 
-    presolve_result = presolve(standard_problem)
-    status = presolve_result[1]
+    presolve_method_used = :None # Track which presolve was successful
 
-    if status == :Success
-        std_presolved, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, dual_lb, dual_ub, obj_offset, free_singleton_subs, final_col_indices_std = presolve_result[2:end]
-        @printf("Original standard form size: (%d, %d), After presolve: (%d, %d)\n", 
-                m_std, n_std, size(std_presolved.A)...)
-        
-        # --- Check Presolve obj_offset ---
-        if !isfinite(obj_offset)
-            @error "Presolve returned non-finite obj_offset!" obj_offset=obj_offset
-        end
-        # --- End Check ---
-
-        # --- Solve the presolved problem --- 
-        A = std_presolved.A
-        b = std_presolved.b
-        c = std_presolved.c
-
-        # --- Check b immediately after presolve ---
+    if feasible_simple
+        @info "Simple presolve successful. Proceeding with simplified problem."
+        A = A_simple
+        b = b_simple
+        c = c_simple
+        presolve_method_used = :Simple
+        # --- Check b immediately after simple presolve ---
         if any(!isfinite, b)
-            @error "Vector b contains non-finite values immediately after presolve!" b=b
-            # Optionally, stop execution or handle the error
-            # return IplpSolution(...) # Or some error state
+            @error "Vector b contains non-finite values immediately after simple presolve!" b=b
+            # Decide how to handle, maybe fallback or error
+            # For now, let's try falling back to extended presolve
+            @warn "Falling back to extended presolve due to non-finite b after simple presolve."
+            feasible_simple = false # Force fallback
+            presolve_method_used = :None
         end
         # --- End Check ---
-
-        # --- Rank Check --- 
-        presolved_A = std_presolved.A
-        presolved_m, presolved_n = size(presolved_A)
-        rank_A = rank(Matrix(presolved_A)) # Convert to dense for rank calculation
-        @printf("Rank of presolved A: %d (Dimensions: %d x %d)\n", rank_A, presolved_m, presolved_n)
-        if rank_A < presolved_m
-             @warn "Presolved matrix A has linearly dependent rows (rank $rank_A < $presolved_m). KKT matrix will be singular."
-             # Optionally: Decide whether to proceed or error out
-             # return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(y),vec(s), :PresolveRankDeficient)
+         # --- Rank Check (Simple Presolve) ---
+        simple_m, simple_n = size(A)
+        if simple_m > 0 # Only check rank if matrix is not empty
+            rank_A_simple = rank(Matrix(A)) # Convert to dense for rank calculation
+            @printf("Rank of simple presolved A: %d (Dimensions: %d x %d)\n", rank_A_simple, simple_m, simple_n)
+            if rank_A_simple < simple_m
+                 @warn "Simple Presolved matrix A has linearly dependent rows (rank $rank_A_simple < $simple_m). KKT matrix might be singular."
+                 # Consider fallback? Or just warn and proceed? Warn for now.
+            end
+        else
+            @info "Simple presolved matrix A is empty. Skipping rank check."
         end
-        # --- End Rank Check -
+        # --- End Rank Check ---
     end
 
-    # if !feasible
-    #     return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
-    # end
+    # --- If Simple Presolve Failed or wasn't feasible, use Extended Presolve ---
+    if !feasible_simple # This includes the fallback case from non-finite b
+        @info "Simple presolve deemed infeasible or failed. Attempting extended presolve."
+        presolve_result = presolve(standard_problem) # Using the original standard_problem
+        status = presolve_result[1]
 
+        if status == :Success
+            @info "Extended presolve successful."
+            std_presolved, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, dual_lb, dual_ub, obj_offset, free_singleton_subs, final_col_indices_std = presolve_result[2:end]
+            @printf("Original standard form size: (%d, %d), After extended presolve: (%d, %d)\n",
+                    m_std, n_std, size(std_presolved.A)...)
+
+            # --- Check Presolve obj_offset ---
+            if !isfinite(obj_offset)
+                @error "Extended Presolve returned non-finite obj_offset!" obj_offset=obj_offset
+                # Handle error - maybe return infeasible?
+                 return IplpSolution(vec([]),false,vec(Problem.c),standard_problem.A,vec(standard_problem.b),vec([]),vec([]),vec([])) # Return original problem structure but indicate failure
+            end
+            # --- End Check ---
+
+            # --- Solve the presolved problem ---
+            A = std_presolved.A
+            b = std_presolved.b
+            c = std_presolved.c
+            presolve_method_used = :Extended
+
+            # --- Check b immediately after extended presolve ---
+            if any(!isfinite, b)
+                @error "Vector b contains non-finite values immediately after extended presolve!" b=b
+                 return IplpSolution(vec([]),false,vec(Problem.c),standard_problem.A,vec(standard_problem.b),vec([]),vec([]),vec([])) # Return original problem structure but indicate failure
+            end
+            # --- End Check ---
+
+            # --- Rank Check (Extended Presolve) ---
+            presolved_A = std_presolved.A
+            presolved_m, presolved_n = size(presolved_A)
+             if presolved_m > 0 # Only check rank if matrix is not empty
+                rank_A = rank(Matrix(presolved_A)) # Convert to dense for rank calculation
+                @printf("Rank of extended presolved A: %d (Dimensions: %d x %d)\n", rank_A, presolved_m, presolved_n)
+                if rank_A < presolved_m
+                     @warn "Extended Presolved matrix A has linearly dependent rows (rank $rank_A < $presolved_m). KKT matrix will be singular."
+                     # Optionally: Decide whether to proceed or error out
+                     # return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s), :PresolveRankDeficient) # Using presolved A,b,c here
+                end
+             else
+                 @info "Extended presolved matrix A is empty. Skipping rank check."
+             end
+            # --- End Rank Check ---
+        elseif status == :Infeasible
+             @warn "Extended presolve determined the problem to be infeasible."
+             # Return indicating infeasibility based on presolve
+             return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([])) # Indicate infeasibility
+        else # Handle other non-success statuses like :Error
+             @error "Extended presolve failed with status: $status"
+             return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([])) # Indicate error
+        end
+    end
+
+    # --- Check if any presolve method was successful ---
+    if presolve_method_used == :None
+        @error "Both simple and extended presolve failed to produce a feasible problem to solve."
+        return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([]))
+    end
+
+
+    # Get dimensions of the matrix *after* the chosen presolve
     m,n = size(A)
     @show size(A)
 
@@ -217,11 +269,25 @@ function iplp(Problem, tol; maxit=100)
 
         # Check if tolerances are satisfied
         if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
-            #x_unpresolved = unpresolve(orig_n, x, remaining_cols, removed_cols, xpre)
-            #x_unpresolved = revProb(std_problem, ind0c, dup_main_c, ind_dup_c, x)
-            x_unpresolved = revProb(standard_problem, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, free_singleton_subs, final_col_indices_std, x)
-            
-            # --- Check revProb result ---
+
+            local x_unpresolved # Ensure scope for conditional assignment
+
+            # --- Unpresolve based on the method used ---
+            if presolve_method_used == :Simple
+                @info "Using simple_unpresolve."
+                 x_unpresolved = simple_unpresolve(orig_n_std, x, remaining_cols_simple, cols_removed_simple, xpre_simple)
+            elseif presolve_method_used == :Extended
+                @info "Using revProb (extended unpresolve)."
+                 x_unpresolved = revProb(standard_problem, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, free_singleton_subs, final_col_indices_std, x)
+            else
+                # This case should ideally not be reached if checks above are correct
+                @error "Reached unpresolve step without a valid presolve method recorded."
+                # Fallback or error - let's try assuming no presolve if this happens?
+                # This is risky, the dimensions might be wrong. Erroring out is safer.
+                 return IplpSolution(vec([]),false,vec(Problem.c),A,vec(b),vec(x),vec(lambda),vec(s)) # Indicate internal error
+            end
+
+            # --- Check unpresolve result ---
             if any(!isfinite, x_unpresolved)
                 @warn "revProb returned non-finite values in x_unpresolved!" x_unpresolved=x_unpresolved
             end
@@ -243,15 +309,16 @@ function iplp(Problem, tol; maxit=100)
             # --- End Check ---
             final_obj = dot(Problem.c, orig_x) # Use original cost vector
             if !isfinite(final_obj)
-                 @warn "Final calculated objective is non-finite!" final_obj=final_obj orig_x=orig_x
+                  @warn "Final calculated objective is non-finite!" final_obj=final_obj orig_x=orig_x
             end
             # --- End Check ---
             
-            return IplpSolution(vec(orig_x),true,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+            return IplpSolution(vec(orig_x), true, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
         end
     end
 
     # Failed to converge in maxit iterations
-    return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+    # Return the final solution using the original problem's c and the final A,b from the *last successful presolve*
+    return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
 end
 
