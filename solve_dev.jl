@@ -4,13 +4,10 @@ using Printf;
 using LinearAlgebra;
 
 include("starting_point.jl")
-#include("presolve.jl")
 include("presolve_extended.jl")
 include("conversions.jl")
 include("problem_def.jl")
 
-function solve_processed(Problem, tol; maxit=100)
-end
 
 # argmax alpha {[0, 1] | x + alpha * dx >= 0}
 # x + alpha * dx >= 0 -> solve for alpha:
@@ -28,7 +25,7 @@ function calcalpha(x, dx)
     return max(alpha, 0.0)
 end
 
-function iplp(Problem, tol; maxit=100)
+function extended_iplp(Problem, tol; maxit=100)
     # Convert to standard form
     A, b, c, free, bounded_below, bounded_above, bounded = tostandard(Problem)
 
@@ -122,7 +119,7 @@ function iplp(Problem, tol; maxit=100)
 
     # Implementing Mehrotra's predictor-corrector algorithm (Ch. 10 of Wright)
     for i = 1:maxit
-        @show i
+        #@show i
         # Regularization parameters (can be tuned)
         delta_p = 1e-8 # Primal regularization
         delta_d = 1e-8 # Dual regularization
@@ -175,9 +172,9 @@ function iplp(Problem, tol; maxit=100)
         alpha_pri = min(0.99 * calcalpha(x, dx), 1.0)
         alpha_dual = min(0.99 * calcalpha(s, ds), 1.0)
 
-        @show alpha_aff_pri, alpha_aff_dual
-        @show alpha_pri, alpha_dual
-        @show mu, dot(x, s)
+        # @show alpha_aff_pri, alpha_aff_dual
+        # @show alpha_pri, alpha_dual
+        # @show mu, dot(x, s)
 
         if (dot(x, s) > 1e308)
             # Very large (exploding) complementarity - problem is infeasible

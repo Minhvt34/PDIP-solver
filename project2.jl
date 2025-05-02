@@ -4,30 +4,36 @@ using Printf;
 using LinearAlgebra;
 using MatrixDepot, SparseArrays
 
-mutable struct IplpSolution
-  x::Vector{Float64} # the solution vector
-  flag::Bool         # a true/false flag indicating convergence or not
-  cs::Vector{Float64} # the objective vector in standard form
-  As::SparseMatrixCSC{Float64} # the constraint matrix in standard form
-  bs::Vector{Float64} # the right hand side (b) in standard form
-  xs::Vector{Float64} # the solution in standard form
-  lam::Vector{Float64} # the solution lambda in standard form
-  s::Vector{Float64} # the solution s in standard form
-end
+include("problem_def.jl")
 
-mutable struct IplpProblem
-  c::Vector{Float64}
-  A::SparseMatrixCSC{Float64}
-  b::Vector{Float64}
-  lo::Vector{Float64}
-  hi::Vector{Float64}
-end
+# mutable struct IplpSolution
+#   x::Vector{Float64} # the solution vector
+#   flag::Bool         # a true/false flag indicating convergence or not
+#   cs::Vector{Float64} # the objective vector in standard form
+#   As::SparseMatrixCSC{Float64} # the constraint matrix in standard form
+#   bs::Vector{Float64} # the right hand side (b) in standard form
+#   xs::Vector{Float64} # the solution in standard form
+#   lam::Vector{Float64} # the solution lambda in standard form
+#   s::Vector{Float64} # the solution s in standard form
+# end
+
+# mutable struct IplpProblem
+#   c::Vector{Float64}
+#   A::SparseMatrixCSC{Float64}
+#   b::Vector{Float64}
+#   lo::Vector{Float64}
+#   hi::Vector{Float64}
+# end
 
 include("starting_point.jl")
-#include("presolve.jl")
 include("presolve_extended.jl")
-include("presolve_simple.jl")
 include("conversions.jl")
+include("solve_dev.jl")
+
+include("presolve_simple.jl")
+include("starting_point_simple.jl")
+include("conversions_simple.jl")
+include("solve_simple.jl")
 
 function convert_matrixdepot(P::MatrixDepot.MatrixDescriptor)
   # key_base = sort(collect(keys(mmmeta)))[1]
@@ -48,277 +54,334 @@ function calcalpha(x, dx)
             alpha = min(alpha, -x[i] / dx[i])
         end
     end
-    return max(alpha, 0.0)
+    # Ensure alpha is non-negative, guards against cases where all dx[i] >= 0
+    # Also handles the Inf case naturally if no dx[i] < 0
+    return max(alpha, 0.0) 
 end
 
-function iplp(Problem, tol; maxit=100)
-    # Convert to standard form
-    A, b, c, free, bounded_below, bounded_above, bounded = tostandard(Problem)
+# Robust IPM Solver Loop (already defined)
+# Helper function encapsulating the IPM loop for a *presolved* standard form problem
+function solve_presolved_problem(A::SparseMatrixCSC{Float64}, b::Vector{Float64}, c::Vector{Float64}, tol, maxit)
+    m, n = size(A)
 
-    # Presolve step - modify A,b,c to be nicer
-    @show size(A)
-    orig_n_std = size(A, 2) # Original standard form n
-
-    m_std, n_std = size(A)
-    lo_std = zeros(n_std)
-    hi_std = fill(Inf, n_std)
-
-    standard_problem = IplpProblem(c, A, b, lo_std, hi_std)
-
-    # --- Try Simple Presolve First ---
-    A_simple, b_simple, c_simple, remaining_cols_simple, cols_removed_simple, xpre_simple, feasible_simple = simple_presolve(
-        copy(standard_problem.A), copy(standard_problem.b), copy(standard_problem.c), standard_problem.hi, standard_problem.lo
-    )
-
-    presolve_method_used = :None # Track which presolve was successful
-
-    if feasible_simple
-        @info "Simple presolve successful. Proceeding with simplified problem."
-        A = A_simple
-        b = b_simple
-        c = c_simple
-        presolve_method_used = :Simple
-        # --- Check b immediately after simple presolve ---
-        if any(!isfinite, b)
-            @error "Vector b contains non-finite values immediately after simple presolve!" b=b
-            # Decide how to handle, maybe fallback or error
-            # For now, let's try falling back to extended presolve
-            @warn "Falling back to extended presolve due to non-finite b after simple presolve."
-            feasible_simple = false # Force fallback
-            presolve_method_used = :None
-        end
-        # --- End Check ---
-         # --- Rank Check (Simple Presolve) ---
-        simple_m, simple_n = size(A)
-        if simple_m > 0 # Only check rank if matrix is not empty
-            rank_A_simple = rank(Matrix(A)) # Convert to dense for rank calculation
-            @printf("Rank of simple presolved A: %d (Dimensions: %d x %d)\n", rank_A_simple, simple_m, simple_n)
-            if rank_A_simple < simple_m
-                 @warn "Simple Presolved matrix A has linearly dependent rows (rank $rank_A_simple < $simple_m). KKT matrix might be singular."
-                 # Consider fallback? Or just warn and proceed? Warn for now.
-            end
-        else
-            @info "Simple presolved matrix A is empty. Skipping rank check."
-        end
-        # --- End Rank Check ---
-    end
-
-    # --- If Simple Presolve Failed or wasn't feasible, use Extended Presolve ---
-    if !feasible_simple # This includes the fallback case from non-finite b
-        @info "Simple presolve deemed infeasible or failed. Attempting extended presolve."
-        presolve_result = presolve(standard_problem) # Using the original standard_problem
-        status = presolve_result[1]
-
-        if status == :Success
-            @info "Extended presolve successful."
-            std_presolved, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, dual_lb, dual_ub, obj_offset, free_singleton_subs, final_col_indices_std = presolve_result[2:end]
-            @printf("Original standard form size: (%d, %d), After extended presolve: (%d, %d)\n",
-                    m_std, n_std, size(std_presolved.A)...)
-
-            # --- Check Presolve obj_offset ---
-            if !isfinite(obj_offset)
-                @error "Extended Presolve returned non-finite obj_offset!" obj_offset=obj_offset
-                # Handle error - maybe return infeasible?
-                 return IplpSolution(vec([]),false,vec(Problem.c),standard_problem.A,vec(standard_problem.b),vec([]),vec([]),vec([])) # Return original problem structure but indicate failure
-            end
-            # --- End Check ---
-
-            # --- Solve the presolved problem ---
-            A = std_presolved.A
-            b = std_presolved.b
-            c = std_presolved.c
-            presolve_method_used = :Extended
-
-            # --- Check b immediately after extended presolve ---
-            if any(!isfinite, b)
-                @error "Vector b contains non-finite values immediately after extended presolve!" b=b
-                 return IplpSolution(vec([]),false,vec(Problem.c),standard_problem.A,vec(standard_problem.b),vec([]),vec([]),vec([])) # Return original problem structure but indicate failure
-            end
-            # --- End Check ---
-
-            # --- Rank Check (Extended Presolve) ---
-            presolved_A = std_presolved.A
-            presolved_m, presolved_n = size(presolved_A)
-             if presolved_m > 0 # Only check rank if matrix is not empty
-                rank_A = rank(Matrix(presolved_A)) # Convert to dense for rank calculation
-                @printf("Rank of extended presolved A: %d (Dimensions: %d x %d)\n", rank_A, presolved_m, presolved_n)
-                if rank_A < presolved_m
-                     @warn "Extended Presolved matrix A has linearly dependent rows (rank $rank_A < $presolved_m). KKT matrix will be singular."
-                     # Optionally: Decide whether to proceed or error out
-                     # return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s), :PresolveRankDeficient) # Using presolved A,b,c here
-                end
-             else
-                 @info "Extended presolved matrix A is empty. Skipping rank check."
-             end
-            # --- End Rank Check ---
-        elseif status == :Infeasible
-             @warn "Extended presolve determined the problem to be infeasible."
-             # Return indicating infeasibility based on presolve
-             return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([])) # Indicate infeasibility
-        else # Handle other non-success statuses like :Error
-             @error "Extended presolve failed with status: $status"
-             return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([])) # Indicate error
-        end
-    end
-
-    # --- Check if any presolve method was successful ---
-    if presolve_method_used == :None
-        @error "Both simple and extended presolve failed to produce a feasible problem to solve."
-        return IplpSolution(vec([]), false, vec(Problem.c), standard_problem.A, vec(standard_problem.b), vec([]), vec([]), vec([]))
-    end
-
-
-    # Get dimensions of the matrix *after* the chosen presolve
-    m,n = size(A)
-    @show size(A)
-
-    # --- Check inputs to get_starting_point ---
+    # --- Check inputs ---
     if any(!isfinite, A.nzval) # Check non-zero values for sparse matrix
         @error "Matrix A contains non-finite values before starting point calculation!"
-        # Handle error appropriately, e.g., return an error status
+        return vec([]), vec([]), vec([]), false # Indicate failure
     end
     if any(!isfinite, b)
         @error "Vector b contains non-finite values before starting point calculation!"
+         return vec([]), vec([]), vec([]), false
     end
     if any(!isfinite, c)
         @error "Vector c contains non-finite values before starting point calculation!"
+         return vec([]), vec([]), vec([]), false
     end
     # --- End Check ---
 
     # Get initially feasible x, lambda, s
-    # TODO
     x, lambda, s = get_starting_point(A, b, c)
 
-    @show minimum(x)
-    @show minimum(s)
-    @show maximum(abs.(x)) # Check for large values too
-    @show maximum(abs.(s))
+    # --- Check starting point ---
+    if any(!isfinite, x) || any(!isfinite, lambda) || any(!isfinite, s)
+        @error "Starting point calculation resulted in non-finite values." x=minimum(x) s=minimum(s) lambda=minimum(lambda)
+        # Check if initial x or s are non-positive, which get_starting_point should prevent
+        if !isempty(x) && minimum(x) <= 0 || !isempty(s) && minimum(s) <= 0 # Added isempty checks
+             @warn "Starting point generation resulted in non-positive x or s." minimum_x=isempty(x) ? NaN : minimum(x) minimum_s=isempty(s) ? NaN : minimum(s)
+        end
+        # Even if non-positive, attempt to proceed? Or fail here? Let's fail early.
+         return vec([]), vec([]), vec([]), false
+    end
+    min_x_start, max_x_start = isempty(x) ? (NaN, NaN) : (minimum(x), maximum(abs.(x)))
+    min_s_start, max_s_start = isempty(s) ? (NaN, NaN) : (minimum(s), maximum(abs.(s)))
+    @info "Starting point: min(x)=$(min_x_start), max|x|=$(max_x_start), min(s)=$(min_s_start), max|s|=$(max_s_start)"
+    # --- End Check ---
+
 
     # Implementing Mehrotra's predictor-corrector algorithm (Ch. 10 of Wright)
     for i = 1:maxit
-        @show i
+        @debug "Iteration $i" # Changed from @show to @debug for less verbose output unless debugging
+
+        # Check for NaNs/Infs in iterates
+        if any(!isfinite, x) || any(!isfinite, lambda) || any(!isfinite, s)
+             @warn "Non-finite values detected in iterates at start of iteration $i. Aborting." # x=x lambda=lambda s=s Removed for brevity
+             return vec(x), vec(lambda), vec(s), false # Return current state, flag failure
+        end
+
         # Regularization parameters (can be tuned)
+        # Increased regularization slightly based on potential KKT issues
         delta_p = 1e-8 # Primal regularization
         delta_d = 1e-8 # Dual regularization
 
-        # Affine direction step (10.1 Wright)
+        # Ensure positivity before forming KKT system parts
+        x_reg = max.(x, 1e-12) # Prevent zero/negative in diag
+        s_reg = max.(s, 1e-12) # Prevent zero/negative in diag
+
+
+        # Affine direction step (10.1 Wright) - KKT System construction
+        # Regularized KKT Matrix M
         M = [
-            spdiagm(0 => fill(delta_p, n))  A'              Matrix(I, n, n);
+            spdiagm(0 => fill(delta_p, n))  A'              spdiagm(0 => ones(n)); # Use identity instead of Matrix(I, n, n)
             A                              -spdiagm(0 => fill(delta_d, m)) spzeros(m, n);
-            spdiagm(0 => s) spzeros(n, m) spdiagm(0 => x);
+            spdiagm(0 => s_reg)             spzeros(n, m)   spdiagm(0 => x_reg);
         ]
 
-        # Check if M is full-rank
-        # Use LU factorization, which is more robust for potentially singular matrices than Cholesky
-        local mat # Ensure mat is scoped correctly for potential error handling
+        # Check condition number if possible/needed (expensive)
+        # cond_M = cond(Matrix(M))
+        # @debug "Condition number of KKT matrix M: $cond_M"
+        # if cond_M > 1e14 # Threshold for ill-conditioning
+        #     @warn "KKT matrix is ill-conditioned at iteration $i (cond ≈ $cond_M). Regularizing more?"
+        #     # Potentially increase delta_p, delta_d or use iterative refinement?
+        # end
+
+        # Factorize KKT system
+        local mat # Ensure mat is scoped correctly
         try
+            # Use lu for potential singularity, consider LDLt if known positive definite properties hold
+            # For general saddle-point systems, lu is often more robust
             mat = lu(M)
             if !issuccess(mat) # Check if LU factorization succeeded numerically
-                 @warn "LU factorization of KKT matrix failed numerically at iteration $i."
+                 @warn "LU factorization of KKT matrix failed numerically at iteration $i. Matrix may be singular or ill-conditioned."
                  # Handle failure: maybe return current state or a specific error status
-                 return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s), :KKTLUFactorizationFailed)
+                 return vec(x), vec(lambda), vec(s), false # Return current state, flag failure
             end
         catch e
-             @warn "Error during LU factorization of KKT matrix at iteration $i." exception=e
+             @warn "Error during LU factorization of KKT matrix at iteration $i." exception=(e, catch_backtrace())
              # Handle failure
-             return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s), :KKTLUFactorizationError)
+              return vec(x), vec(lambda), vec(s), false # Return current state, flag failure
         end
 
-        rhs_aff = [
-            - (A' * lambda + s - c);
-            - (A * x - b);
-            - (x .* s)
-        ]
-        daff = mat \ rhs_aff
-        dxaff, dlambdaff, dsaff = daff[1:n], daff[n+1:n+m], daff[n+m+1:n+m+n]
+        # Affine RHS
+        res_p = A' * lambda + s - c # Primal residual (dual feasibility)
+        res_d = A * x - b          # Dual residual (primal feasibility)
+        res_c = x .* s             # Complementarity residual
+        rhs_aff = [ -res_p; -res_d; -res_c ]
+
+        # Solve for affine step direction
+        local daff # Scope for error handling
+        try
+             daff = mat \ rhs_aff # Use \ for potentially slightly better handling of ill-conditioned systems vs \
+        catch e
+             @warn "Error solving KKT system for affine step at iteration $i." exception=(e, catch_backtrace())
+              return vec(x), vec(lambda), vec(s), false # Return current state, flag failure
+        end
+
+        # Check for NaN/Inf in affine step
+        if any(!isfinite, daff)
+             @warn "Affine step contains non-finite values at iteration $i. Aborting." # daff=daff removed for brevity
+              return vec(x), vec(lambda), vec(s), false
+        end
+
+
+        dxaff, dlambdaff, dsaff = daff[1:n], daff[n+1:n+m], daff[n+m+1:end] # Use end for robustness
+
+        # Calculate max step lengths (affine)
         alpha_aff_pri = min(1.0, calcalpha(x, dxaff))
         alpha_aff_dual = min(1.0, calcalpha(s, dsaff))
-        mu = dot(x, s) / n # 1.11
-        muaff = (x + alpha_aff_pri * dxaff)' * (s + alpha_aff_dual * dsaff) / n
-        sigma = (muaff / mu)^3 # 10.3
 
-        # Centering-Corrector step from Wright 10.7
+        # Check for very small step sizes
+        # if alpha_aff_pri < 1e-12 && alpha_aff_dual < 1e-12
+        #      @warn "Affinte step sizes are extremely small at iteration $i. Stalling?"
+        # end
+
+        # Calculate mu and centering parameter sigma
+        mu = n > 0 ? dot(x, s) / n : 0.0 # Handle n=0 case
+        # Prevent division by zero or negative mu
+        if mu <= 1e-14 && n > 0 # Add n>0 check
+            @debug "Mu is very small or non-positive ($mu) at iteration $i. Checking convergence."
+            # If mu is tiny, we might already be converged or very close
+             norm_b = 1 + norm(b)
+             norm_c = 1 + norm(c)
+             primal_feas_norm = norm(res_d) / norm_b
+             dual_feas_norm   = norm(res_p) / norm_c
+             # current_norm = norm([res_p; res_d; res_c]) / (1 + norm([b;c])) # Use relative norm
+             if primal_feas_norm <= tol && dual_feas_norm <= tol # Check only feasibility if gap is tiny
+                 @info "Convergence detected due to small mu and feasible residuals at iteration $i."
+                 return vec(x), vec(lambda), vec(s), true
+             else
+                 @warn "Mu is very small ($mu) but residuals (P:$(primal_feas_norm), D:$(dual_feas_norm)) still too large. Potential stall or issue."
+                 # Decide whether to proceed with caution or stop? Let's try proceeding one more step carefully.
+                 # If mu is non-positive, something is wrong.
+                 if mu <= 0 && n > 0
+                      @error "Mu became non-positive ($mu) at iteration $i. Aborting."
+                      return vec(x), vec(lambda), vec(s), false
+                 end
+             end
+        end
+
+        muaff = n > 0 ? dot(x + alpha_aff_pri * dxaff, s + alpha_aff_dual * dsaff) / n : 0.0
+        # Avoid division by zero/very small mu; if mu is tiny, centering isn't the main goal
+        sigma = (mu > 1e-12 && n > 0) ? clamp((muaff / mu)^3, 1e-6, 0.5) : 0.1 # Clamp sigma (10.3), ensure it's not too large or small, different default if mu small
+
+
+        # Centering-Corrector step (Wright 10.7)
         rhs_cc = [
-            zeros(n, 1);
-            zeros(m, 1);
-            sigma * mu .- (dxaff .* dsaff)
+            zeros(n); # No change in feasibility residuals
+            zeros(m);
+            (n > 0 ? sigma * mu : 0.0) .- (dxaff .* dsaff) # Centering + correction term, handle n=0
         ]
-        dcc = mat \ rhs_cc
-        dxcc, dlambdacc, dscc = dcc[1:n], dcc[n+1:n+m], dcc[n+m+1:n+m+n]
+
+        # Solve for centering-corrector step direction
+        local dcc # Scope for error handling
+        try
+            dcc = mat \ rhs_cc
+        catch e
+             @warn "Error solving KKT system for centering-corrector step at iteration $i." exception=(e, catch_backtrace())
+              return vec(x), vec(lambda), vec(s), false # Return current state, flag failure
+        end
+
+        # Check for NaN/Inf in centering-corrector step
+         if any(!isfinite, dcc)
+             @warn "Centering-corrector step contains non-finite values at iteration $i. Aborting." # dcc=dcc removed
+              return vec(x), vec(lambda), vec(s), false
+        end
+
+        dxcc, dlambdacc, dscc = dcc[1:n], dcc[n+1:n+m], dcc[n+m+1:end]
+
+        # Combine steps
         dx, dlambda, ds = dxaff + dxcc, dlambdaff + dlambdacc, dsaff + dscc
-        alpha_pri = min(0.99 * calcalpha(x, dx), 1.0)
-        alpha_dual = min(0.99 * calcalpha(s, ds), 1.0)
 
-        @show alpha_aff_pri, alpha_aff_dual
-        @show alpha_pri, alpha_dual
-        @show mu, dot(x, s)
+        # Calculate final step lengths with damping factor (eta)
+        eta = 0.99 # Damping factor, common choice is 0.99 or 0.995
+        alpha_pri = min(1.0, eta * calcalpha(x, dx))
+        alpha_dual = min(1.0, eta * calcalpha(s, ds))
 
-        if (dot(x, s) > 1e308)
-            # Very large (exploding) complementarity - problem is infeasible
-            return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+        @debug "Stepsizes: aff_pri=$(alpha_aff_pri), aff_dual=$(alpha_aff_dual), pri=$(alpha_pri), dual=$(alpha_dual)"
+        @debug "Mu=$(mu), Mu_aff=$(muaff), Sigma=$(sigma)"
+
+
+        # --- Step Size Checks ---
+        if !isfinite(alpha_pri) || !isfinite(alpha_dual) || alpha_pri < 0 || alpha_dual < 0
+            @warn "Calculated step sizes are non-finite or negative at iteration $i. alpha_pri=$alpha_pri, alpha_dual=$alpha_dual. Aborting."
+             return vec(x), vec(lambda), vec(s), false
+        end
+        # Check for excessively large (potentially infinite) steps, indicating unboundedness/infeasibility
+         if alpha_pri > 1e50 || alpha_dual > 1e50 # Adjusted threshold
+             @warn "Excessively large step size detected (pri=$alpha_pri, dual=$alpha_dual) at iteration $i. Problem might be unbounded or infeasible."
+             return vec(x), vec(lambda), vec(s), false # Indicate failure
+         end
+         # Check for stagnation (very small steps consistently)
+         # (Could add a counter for small steps if needed)
+         if alpha_pri < 1e-10 && alpha_dual < 1e-10 && n > 0 # Add n>0 check
+             @debug "Step sizes are very small at iteration $i. Potential stagnation."
+         end
+        # --- End Step Size Checks ---
+
+        # Update iterates only if steps are valid
+        if n > 0 # Avoid updating empty vectors
+            x = x + alpha_pri * dx
+            lambda = lambda + alpha_dual * dlambda
+            s = s + alpha_dual * ds
+
+            # Ensure positivity after step (due to floating point, eta < 1 might not guarantee)
+            x = max.(x, 1e-14) # Project slightly above zero if needed
+            s = max.(s, 1e-14)
         end
 
-        if (alpha_pri > 1e308 || alpha_dual > 1e308)
-            # Very large alpha; problem is unbounded or infeasible
-            return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
+        # Calculate new residuals and mu
+        res_p = A' * lambda + s - c
+        res_d = A * x - b
+        res_c = x .* s
+        mu = n > 0 ? dot(x, s) / n : 0.0
+
+
+        # --- Check Tolerances ---
+        # Use relative norms
+        norm_b = 1 + norm(b) # Add 1 to handle b=0 case
+        norm_c = 1 + norm(c) # Add 1 to handle c=0 case
+        primal_feas_norm = norm(res_d) / norm_b
+        dual_feas_norm = norm(res_p) / norm_c
+        comp_gap_norm = mu # Use average gap directly
+
+        @debug "Residuals: PrimalFeas=$(primal_feas_norm), DualFeas=$(dual_feas_norm), CompGap=$(comp_gap_norm)"
+
+        # Check convergence conditions
+        converged = primal_feas_norm <= tol && dual_feas_norm <= tol && comp_gap_norm <= tol
+        
+        # Special case: If n=0 (problem fully presolved), check only primal feasibility if m > 0
+        if n == 0 && m > 0
+             converged = primal_feas_norm <= tol
+        elseif n == 0 && m == 0 # Problem is trivially empty
+            converged = true
         end
 
-        x = x + alpha_pri * dx
-        lambda = lambda + alpha_dual * dlambda
-        s = s + alpha_dual * ds
-
-        # Check if tolerances are satisfied
-        if dot(x, s) / n <= tol && norm([A'* lambda + s - c; A * x - b; x.*s]) / norm([b;c]) <= tol
-
-            local x_unpresolved # Ensure scope for conditional assignment
-
-            # --- Unpresolve based on the method used ---
-            if presolve_method_used == :Simple
-                @info "Using simple_unpresolve."
-                 x_unpresolved = simple_unpresolve(orig_n_std, x, remaining_cols_simple, cols_removed_simple, xpre_simple)
-            elseif presolve_method_used == :Extended
-                @info "Using revProb (extended unpresolve)."
-                 x_unpresolved = revProb(standard_problem, ind0c_std, dup_main_c_std, ind_dup_c_std, ind_fix_c_std, fix_vals_std, free_singleton_subs, final_col_indices_std, x)
-            else
-                # This case should ideally not be reached if checks above are correct
-                @error "Reached unpresolve step without a valid presolve method recorded."
-                # Fallback or error - let's try assuming no presolve if this happens?
-                # This is risky, the dimensions might be wrong. Erroring out is safer.
-                 return IplpSolution(vec([]),false,vec(Problem.c),A,vec(b),vec(x),vec(lambda),vec(s)) # Indicate internal error
-            end
-
-            # --- Check unpresolve result ---
-            if any(!isfinite, x_unpresolved)
-                @warn "revProb returned non-finite values in x_unpresolved!" x_unpresolved=x_unpresolved
-            end
-            # --- End Check ---
-            
-            orig_x = fromstandard(Problem, x_unpresolved, free, bounded_below, bounded_above, bounded)
-            
-            # --- Check fromstandard result ---
-             if any(!isfinite, orig_x)
-                @warn "fromstandard returned non-finite values in orig_x!" orig_x=orig_x x_unpresolved=x_unpresolved
-            end
-            # --- End Check ---
-
-            @show i
-            # --- Calculate and check final objective ---
-            # --- Check magnitude of orig_x ---
-            max_abs_orig_x = maximum(abs.(orig_x))
-            @info "Calculating final objective: dot(Problem.c, orig_x). Max abs(orig_x) = $(max_abs_orig_x)"
-            # --- End Check ---
-            final_obj = dot(Problem.c, orig_x) # Use original cost vector
-            if !isfinite(final_obj)
-                  @warn "Final calculated objective is non-finite!" final_obj=final_obj orig_x=orig_x
-            end
-            # --- End Check ---
-            
-            return IplpSolution(vec(orig_x), true, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
+        if converged
+            @info "Convergence criteria met at iteration $i."
+            return vec(x), vec(lambda), vec(s), true # Converged
         end
+        # --- End Check Tolerances ---
+
+        # --- Check for exploding complementarity ---
+        if mu > 1e50 && n > 0 # Adjusted threshold
+            @warn "Complementarity gap mu is excessively large ($mu) at iteration $i. Problem likely infeasible or unstable."
+            return vec(x), vec(lambda), vec(s), false # Indicate failure
+        end
+         # --- End Check ---
+
+    end # End of main loop
+
+    # Failed to converge within maxit iterations
+    @warn "IPM failed to converge within $maxit iterations."
+    # Return the final iterates and flag failure
+    return vec(x), vec(lambda), vec(s), false
+end
+
+
+# --- Simple Path Attempt ---
+function _attempt_simple_path(Problem, tol, maxit)
+    @info "Attempting Simple Path..."
+    try
+        solution = @time simple_iplp(Problem, tol; maxit)
+
+        @show solution.flag
+
+        if solution.flag
+            @info "Simple Path Successful."
+            return solution
+        else
+             @info "Simple IPM Failed to Converge."
+             return nothing # Indicate simple path failure
+        end
+
+    catch e
+        @error "Error during Simple Path execution." exception=(e, catch_backtrace())
+        return nothing # Indicate simple path failure
     end
+end
 
-    # Failed to converge in maxit iterations
-    # Return the final solution using the original problem's c and the final A,b from the *last successful presolve*
-    return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
+# --- Extended/Robust Path Attempt ---
+function _attempt_extended_path(Problem, tol, maxit)
+    @info "Attempting Extended/Robust Path..."
+    try
+        solution = @time extended_iplp(Problem, tol; maxit)
+
+        return solution
+
+    catch e
+        @error "Error during Extended/Robust Path execution." exception=(e, catch_backtrace())
+        return nothing # Indicate simple path failure
+    end
+end
+
+
+# --- Main iplp Function --- 
+function iplp(Problem, tol; maxit=100)
+    # Try the simple path first
+    simple_result = _attempt_simple_path(Problem, tol, maxit)
+
+    if simple_result !== nothing && simple_result.flag == true # Check if simple path succeeded AND converged
+        @info "Using result from Simple Path."
+        return simple_result
+    else
+        if simple_result !== nothing && simple_result.flag == false
+            @info "Simple path ran but did not converge."
+        elseif simple_result === nothing
+             @info "Simple path failed during setup or encountered an error."
+        end
+        @info "Proceeding to Extended/Robust Path."
+        # Simple path failed, try the extended path
+        extended_result = _attempt_extended_path(Problem, tol, maxit)
+        return extended_result
+    end
 end
 
