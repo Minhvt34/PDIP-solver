@@ -245,7 +245,7 @@ function simple_iplp(Problem, tol; maxit=100)
 
         # @show alpha_aff_pri, alpha_aff_dual
         # @show alpha_pri, alpha_dual
-        # @show mu, dot(x, s)
+        #@show mu, dot(x, s)
 
         if (dot(x, s) > 1e308)
             # Very large (exploding) complementarity - problem is infeasible

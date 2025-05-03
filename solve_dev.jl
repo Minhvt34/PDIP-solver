@@ -168,7 +168,7 @@ function extended_iplp(Problem, tol; maxit=100)
             if !factorization_success && retry_attempt == max_factorization_retries
                  @warn "LU factorization failed permanently at iteration $i after $max_factorization_retries retries."
                  # Return failure status (using final x, lambda, s from previous iteration)
-                  return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s), :KKTLUFactorizationFailed)
+                  return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
             end
         end # End factorization retry loop
         # -- End Adaptive Factorization Attempt --
@@ -212,16 +212,16 @@ function extended_iplp(Problem, tol; maxit=100)
 
         # Check for issues
         current_mu = dot(x,s) # Use dot product before update
-        if !isfinite(current_mu) || current_mu > 1e50 # Check before potentially large mu
+        if !isfinite(current_mu) || current_mu > 1e300 # Check before potentially large mu
              @warn "Complementarity product is non-finite or excessively large before update at iteration $i." mu=current_mu
              # Return current iterates
-             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s), :LargeComplementarity)
+             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
         end
 
-        if !isfinite(alpha_pri) || !isfinite(alpha_dual) || alpha_pri > 1e50 || alpha_dual > 1e50 # Check for large/infinite alpha
+        if !isfinite(alpha_pri) || !isfinite(alpha_dual) || alpha_pri > 1e300 || alpha_dual > 1e300 # Check for large/infinite alpha
              @warn "Step length alpha is non-finite or excessively large at iteration $i." alpha_pri=alpha_pri alpha_dual=alpha_dual
              # Return current iterates
-             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s), :LargeAlpha)
+             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
         end
 
         # Update x, lambda, s

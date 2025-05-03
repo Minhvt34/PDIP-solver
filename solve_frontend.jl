@@ -73,6 +73,23 @@ elseif name == "ALL_LARGE"
         "greenbea",
         "greenbeb",
     ]
+elseif name == "ALL_INFEASIBLE"
+    global_logger(ConsoleLogger(stderr, Logging.Warn)) # Set minimum level to Warn
+
+    problems = [
+        "lpi_ceria3d",
+        "lpi_cplex1",
+        "lpi_forest6",
+        "lpi_galenet",
+        "lpi_greenbea",
+        "lpi_klein1",
+        "lpi_klein2",
+        "lpi_klein3",
+        "lpi_mondou2",
+        "lpi_pilot4i",
+        "lpi_vol1",
+        "lpi_reactor",
+    ]
 else
     problems = [name]
 end
