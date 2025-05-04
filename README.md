@@ -23,13 +23,32 @@ You need to install Julia version > v1.1x to load test from MatrixDepot
 
 ## Usage
 
-To run the solver
+To run the solver (test on LPNetLib, problems will be loaded using the MatrixDepot.jl) package.
 
 ``` shell
 git clone https://github.com/Minhvt34/PDIP-solver.git
 cd PDIP-solver
 julia solve_frontend.jl
 ```
+The struct and convert matrix depot function are placed in problem_def.jl.
+The function to evaluate is placed in project2.jl. For usage:
+
+``` shell
+include("project2.jl")
+
+# Set params and solve problem
+tol = 1e-7
+maxit = 100
+solution = @time iplp(problem, tol; maxit)
+
+@show solution.flag
+if solution.flag
+    @printf "Objective value: %lf\n" dot(problem.c,solution.x)
+else
+    @printf "Solver failed to converge. Check if problem is feasible. Try increasing # iterations in solve_frontend.jl or decreasing tolerance."
+end
+```
+
 ## References
 
 ```bibtex
