@@ -61,5 +61,17 @@ URL = {https://epubs.siam.org/doi/abs/10.1137/1.9781611971453},
 eprint = {https://epubs.siam.org/doi/pdf/10.1137/1.9781611971453}
 }
 
+@article{Andersen01011995,
+author = {Erling D. Andersen and},
+title = {Finding all linearly dependent rows in large-scale linear programming},
+journal = {Optimization Methods and Software},
+volume = {6},
+number = {3},
+pages = {219--227},
+year = {1995},
+publisher = {Taylor \& Francis},
+doi = {10.1080/10556789508805634},
+}
+
 ```
 
