@@ -116,6 +116,7 @@ function extended_iplp(Problem, tol; maxit=100)
     delta_decrease_factor = 2.0   # Factor to decrease delta on LU success
     # -------------------------------------
 
+    tmp_mu = 1.0e-2   
     # Implementing Mehrotra's predictor-corrector algorithm (Ch. 10 of Wright)
     for i = 1:maxit
         # -- Adaptive Factorization Attempt --
@@ -195,6 +196,7 @@ function extended_iplp(Problem, tol; maxit=100)
         muaff = (x + alpha_aff_pri * dxaff)' * (s + alpha_aff_dual * dsaff) / n
         sigma = isapprox(mu, 0.0) ? 0.0 : (muaff / mu)^3 # Avoid division by zero
 
+        tmp_mu = mu < tmp_mu ? mu : tmp_mu
         # Centering-Corrector step
         rhs_cc = [
             zeros(n, 1);
@@ -215,12 +217,14 @@ function extended_iplp(Problem, tol; maxit=100)
         if !isfinite(current_mu) || current_mu > 1e300 # Check before potentially large mu
              @warn "Complementarity product is non-finite or excessively large before update at iteration $i." mu=current_mu
              # Return current iterates
+             @warn "Complementarity is too large at iteration $i. Returning infeasible solution."
              return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
         end
 
         if !isfinite(alpha_pri) || !isfinite(alpha_dual) || alpha_pri > 1e300 || alpha_dual > 1e300 # Check for large/infinite alpha
              @warn "Step length alpha is non-finite or excessively large at iteration $i." alpha_pri=alpha_pri alpha_dual=alpha_dual
              # Return current iterates
+             @warn "Alpha is too large at iteration $i. Returning infeasible solution."
              return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
         end
 
@@ -294,7 +298,7 @@ function extended_iplp(Problem, tol; maxit=100)
     end
 
     # Failed to converge in maxit iterations
-    @warn "Solver did not converge within $maxit iterations."
+    @warn "Solver did not converge within $maxit iterations. mu: $tmp_mu, may adjust tol."
     # Return the final x, lambda, s iterates
     return IplpSolution(vec([]),false,vec(c_std),A_std,vec(b_std),vec(x),vec(lambda),vec(s)) # Use original A_std, b_std, c_std
 end

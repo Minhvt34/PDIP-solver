@@ -16,7 +16,7 @@ function simple_presolve(A, b, c, hi, lo)
         if @views all(A[:, j] .== 0)
             if c[j] < 0
                 # Set this x to upper bound
-                if hi[j] > 1e308
+                if hi[j] > 1e300
                     # Unbounded below
                     @warn "Presolve step detected problem objective is unbounded."
                     return A, b, c, [], [], [], false
@@ -24,7 +24,7 @@ function simple_presolve(A, b, c, hi, lo)
                 push!(xpre, hi[j])
             elseif c[j] > 0
                 # Set this x to lower bound
-                if lo[j] < -1e308
+                if lo[j] < -1e300
                     # Unbounded below
                     @warn "Presolve step detected problem objective is unbounded."
                     return A, b, c, [], [], [], false

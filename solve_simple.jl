@@ -171,6 +171,7 @@ function simple_iplp(Problem, tol; maxit=100)
     delta_decrease_factor = 2.0   # Factor to decrease delta on LU success
     # -------------------------------------
 
+    tmp_mu = 0.0
     # Implementing Mehrotra's predictor-corrector algorithm (Ch. 10 of Wright)
     for i = 1:maxit
         # -- Adaptive Factorization Attempt --
@@ -231,6 +232,7 @@ function simple_iplp(Problem, tol; maxit=100)
         muaff = (x + alpha_aff_pri * dxaff)' * (s + alpha_aff_dual * dsaff) / n
         sigma = (muaff / mu)^3 # 10.3
 
+        tmp_mu = mu < tmp_mu ? mu : tmp_mu
         # Centering-Corrector step from Wright 10.7
         rhs_cc = [
             zeros(n, 1);
@@ -247,13 +249,15 @@ function simple_iplp(Problem, tol; maxit=100)
         # @show alpha_pri, alpha_dual
         #@show mu, dot(x, s)
 
-        if (dot(x, s) > 1e308)
+        if (dot(x, s) > 1e300)
             # Very large (exploding) complementarity - problem is infeasible
+            @warn "Complementarity is too large at iteration $i. Returning infeasible solution."
             return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
         end
 
-        if (alpha_pri > 1e308 || alpha_dual > 1e308)
+        if (alpha_pri > 1e300 || alpha_dual > 1e300)
             # Very large alpha; problem is unbounded or infeasible
+            @warn "Alpha is too large at iteration $i. Returning infeasible solution."
             return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s))
         end
 
@@ -302,9 +306,9 @@ function simple_iplp(Problem, tol; maxit=100)
     end
 
     # Failed to converge in maxit iterations
-    @warn "Solver did not converge within $maxit iterations."
+    @warn "Solver did not converge within $maxit iterations. mu: $tmp_mu, may adjust tol."
     # Return final loop iterates
 
-    # Return original standard form problem and (conditionally unscaled) presolved iterates
+    # Return original standard form problem and (conditionally unscaled) presolved iterates  
     return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
 end
