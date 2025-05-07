@@ -254,7 +254,8 @@ function extended_iplp(Problem, tol; maxit=100)
         primal_feas = norm(primal_res, Inf) / rel_tol_b
         dual_feas = norm(dual_res, Inf) / rel_tol_c
 
-        if mu <= tol && primal_feas <= tol && dual_feas <= tol
+        # if mu <= tol && primal_feas <= tol && dual_feas <= tol
+        if mu <= tol && norm([A'*lambda + s - c; A*x - b; x.*s])/norm([b;c]) <= tol # && primal_feas <= tol && dual_feas <= tol
             @info "Converged at iteration $i."
 
             # Solution vectors x, lambda, s are the final iterates from the loop
