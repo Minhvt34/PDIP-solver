@@ -214,7 +214,7 @@ function simple_iplp(Problem, tol; maxit=100)
 
             if !factorization_success && retry_attempt == max_factorization_retries
                  @warn "LU factorization failed permanently (Simple Path) at iteration $i after $max_factorization_retries retries."
-                 return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+                 return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
             end
         end
         # -- End Adaptive Factorization Attempt --
@@ -301,7 +301,7 @@ function simple_iplp(Problem, tol; maxit=100)
             # Return final solution, original standard form problem, and unscaled *presolved* iterates
             # If scaling was done, x_ps/lambda_ps/s_ps are the unscaled presolved iterates.
             # If not, they are just the final iterates x/lambda/s from the loop.
-            return IplpSolution(vec(orig_x), true, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+            return IplpSolution(vec(orig_x), true, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
         end
     end
 
@@ -310,5 +310,5 @@ function simple_iplp(Problem, tol; maxit=100)
     # Return final loop iterates
 
     # Return original standard form problem and (conditionally unscaled) presolved iterates  
-    return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+    return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
 end

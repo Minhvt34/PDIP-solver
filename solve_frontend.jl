@@ -108,6 +108,9 @@ for name in problems
     @show solution.flag
     if solution.flag
         @printf "Objective value: %lf\n" dot(problem.c,solution.x)
+        sl = solution
+        @show (sl.xs'*sl.s)/size(sl.xs, 1)
+        @show norm([sl.As'*sl.lam + sl.s - sl.cs; sl.As*sl.xs - sl.bs; sl.xs.*sl.s])/norm([sl.bs;sl.cs])
     else
         @printf "Solver failed to converge. Check if problem is feasible. Try increasing # iterations in solve_frontend.jl or decreasing tolerance."
     end

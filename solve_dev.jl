@@ -79,7 +79,7 @@ function extended_iplp(Problem, tol; maxit=100)
     else # Presolve failed or returned non-:Success status
         @error "Presolve failed or returned status: $status. Cannot proceed."
         # Return with original standard form problem data and indicate failure
-        return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec([]), vec([]), vec([]), status) # Adjust signature if needed
+        return IplpSolution(vec([]), false, vec(c), A, vec(b), vec([]), vec([]), vec([])) # Adjust signature if needed
     end
 
     # Now A, b, c are the (potentially scaled) presolved matrices
@@ -169,7 +169,7 @@ function extended_iplp(Problem, tol; maxit=100)
             if !factorization_success && retry_attempt == max_factorization_retries
                  @warn "LU factorization failed permanently at iteration $i after $max_factorization_retries retries."
                  # Return failure status (using final x, lambda, s from previous iteration)
-                  return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+                  return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
             end
         end # End factorization retry loop
         # -- End Adaptive Factorization Attempt --
@@ -218,14 +218,14 @@ function extended_iplp(Problem, tol; maxit=100)
              @warn "Complementarity product is non-finite or excessively large before update at iteration $i." mu=current_mu
              # Return current iterates
              @warn "Complementarity is too large at iteration $i. Returning infeasible solution."
-             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+             return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
         end
 
         if !isfinite(alpha_pri) || !isfinite(alpha_dual) || alpha_pri > 1e300 || alpha_dual > 1e300 # Check for large/infinite alpha
              @warn "Step length alpha is non-finite or excessively large at iteration $i." alpha_pri=alpha_pri alpha_dual=alpha_dual
              # Return current iterates
              @warn "Alpha is too large at iteration $i. Returning infeasible solution."
-             return IplpSolution(vec([]), false, vec(c_std), A_std, vec(b_std), vec(x), vec(lambda), vec(s))
+             return IplpSolution(vec([]), false, vec(c), A, vec(b), vec(x), vec(lambda), vec(s))
         end
 
         # Update x, lambda, s
@@ -294,12 +294,12 @@ function extended_iplp(Problem, tol; maxit=100)
 
             # Return final solution, original standard form problem, and unscaled *presolved* iterates
             # Return the final x, lambda, s iterates from the IPM loop
-            return IplpSolution(vec(orig_x),true,vec(c_std),A_std,vec(b_std),vec(x),vec(lambda),vec(s)) # Use original A_std, b_std, c_std
+            return IplpSolution(vec(orig_x),true,vec(c),A,vec(b),vec(x),vec(lambda),vec(s)) # Use original A_std, b_std, c_std
         end
     end
 
     # Failed to converge in maxit iterations
     @warn "Solver did not converge within $maxit iterations. mu: $tmp_mu, may adjust tol."
     # Return the final x, lambda, s iterates
-    return IplpSolution(vec([]),false,vec(c_std),A_std,vec(b_std),vec(x),vec(lambda),vec(s)) # Use original A_std, b_std, c_std
+    return IplpSolution(vec([]),false,vec(c),A,vec(b),vec(x),vec(lambda),vec(s)) # Use original A_std, b_std, c_std
 end
